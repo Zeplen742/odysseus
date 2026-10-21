@@ -337,17 +337,14 @@ def _sent_tool_names(monkeypatch, *, workspace, message="look at the local proje
     return {t["function"]["name"] for t in schemas if isinstance(t, dict) and "function" in t}
 
 
-def test_low_signal_with_workspace_surfaces_readonly_file_tools(monkeypatch):
+def test_low_signal_with_workspace_surfaces_file_tools(monkeypatch):
     names = _sent_tool_names(monkeypatch, workspace="/tmp")
-    # read-only nav tools surface so the agent can explore
-    assert "read_file" in names
-    assert "get_workspace" in names
-    assert "grep" in names
-    # write/shell tools do NOT surface on a vague message
-    assert "write_file" not in names
-    assert "edit_file" not in names
-    assert "bash" not in names
-    assert "python" not in names
+    # Local patch: file and web tools are always available, so a vague
+    # follow-up mid-task keeps write/shell tools too. Execution is still
+    # gated by the tool policy.
+    for tool in ("read_file", "get_workspace", "grep", "write_file", "edit_file",
+                 "bash", "python", "web_search", "web_fetch"):
+        assert tool in names
 
 
 def test_workspace_coding_request_surfaces_edit_and_verify_tools(monkeypatch):

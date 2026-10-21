@@ -33,6 +33,23 @@ logger = logging.getLogger(__name__)
 # keyword intent so a trivial agent prompt like "test" does not carry every
 # domain's schemas and rules.
 ALWAYS_AVAILABLE = frozenset({
+    # Local patch: file and web tools stay available on every turn so
+    # follow-ups that don't re-name them keep their schemas. The runtime tool
+    # policy still governs whether a particular call may execute.
+    "bash",
+    "python",
+    "read_file",
+    "write_file",
+    "edit_file",
+    "apply_patch",
+    "todowrite",
+    "grep",
+    "glob",
+    "ls",
+    "get_workspace",
+    "manage_bg_jobs",
+    "web_search",
+    "web_fetch",
     # Memory is ambient — "remember this" can follow any message regardless
     # of topic. Without this, RAG drops it and the agent falls back to
     # app_api /api/memory/add which fails with 422 on first attempt.
