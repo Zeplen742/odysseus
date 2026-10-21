@@ -10656,6 +10656,20 @@ _STATEFUL_TOOL_CARRYOVER_DOMAINS: dict[str, str] = {
     "stop_served_model": "cookbook",
     "tail_serve_output": "cookbook",
     "cancel_download": "cookbook",
+    # Mid-task follow-ups ("ok now finish it", "try again", "keep going")
+    # must keep the shell/file and web tools the previous turn ran.
+    "bash": "files",
+    "python": "files",
+    "read_file": "files",
+    "write_file": "files",
+    "edit_file": "files",
+    "apply_patch": "files",
+    "grep": "files",
+    "glob": "files",
+    "ls": "files",
+    "manage_bg_jobs": "files",
+    "web_search": "web",
+    "web_fetch": "web",
 }
 
 
