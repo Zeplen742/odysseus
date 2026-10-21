@@ -7,6 +7,7 @@ Provides token estimation for context usage tracking.
 
 import ipaddress
 import logging
+import os
 import sys
 from typing import Dict, List, Optional, Tuple
 
@@ -398,9 +399,37 @@ def _proxy_catalog_context(endpoint_url: str, model: str) -> Optional[int]:
     return None
 
 
+def _context_override(model: str) -> Optional[int]:
+    """Local patch: ODYSSEUS_CONTEXT_OVERRIDES="model=tokens,model2=tokens".
+
+    Ollama's /v1/models has no context field, so a local qwen tag falls back to
+    the family's 131072 from the known table while Ollama serves far less and
+    silently truncates the prompt from the front (tools and system prompt go
+    first). An exact model id here wins over every other source.
+    """
+    raw = os.getenv("ODYSSEUS_CONTEXT_OVERRIDES", "")
+    name = (model or "").strip().lower()
+    for entry in raw.split(","):
+        key, sep, value = entry.strip().rpartition("=")
+        if not sep or key.strip().lower() != name:
+            continue
+        try:
+            ctx = int(value)
+        except ValueError:
+            logger.warning(f"Ignoring bad ODYSSEUS_CONTEXT_OVERRIDES entry: {entry!r}")
+            continue
+        if ctx > 0:
+            return ctx
+    return None
+
+
 def _query_context_length(endpoint_url: str, model: str) -> Tuple[int, bool]:
     """Query the model API for context length. Returns (context_length, known) where
     ``known`` is False only for the bare DEFAULT_CONTEXT fallback."""
+    override = _context_override(model)
+    if override:
+        logger.info(f"Context override for {model}: {override}")
+        return override, True
     known = _lookup_known(model)
     api_ctx = None
     configured_kind = _configured_endpoint_kind(endpoint_url)
