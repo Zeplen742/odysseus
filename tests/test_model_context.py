@@ -312,3 +312,44 @@ class TestGetContextLength:
 
         endpoint = "http://100.117.136.97:34521/v1/chat/completions"
         assert model_context.get_context_length(endpoint, "unknown-proxy-model") == model_context.DEFAULT_CONTEXT
+
+
+class TestContextOverrides:
+    """Local patch: ODYSSEUS_CONTEXT_OVERRIDES beats the family table for Ollama tags."""
+
+    ENDPOINT = "http://192.168.68.60:11434/v1/chat/completions"
+
+    def setup_method(self):
+        model_context._context_cache.clear()
+
+    def _ollama(self, monkeypatch):
+        _install_endpoint_db(monkeypatch, [])
+
+        def fake_get(url, *args, **kwargs):
+            if url.endswith("/slots"):
+                raise RuntimeError("not llama.cpp")
+            # Ollama's OpenAI-compatible /v1/models carries no context field.
+            return _FakeResp({"data": [{"id": "qwen3.8:27b", "object": "model"}]})
+
+        monkeypatch.setattr(model_context.httpx, "get", fake_get)
+
+    def test_without_override_ollama_qwen_reports_family_window(self, monkeypatch):
+        self._ollama(monkeypatch)
+        monkeypatch.delenv("ODYSSEUS_CONTEXT_OVERRIDES", raising=False)
+        assert model_context.get_context_length(self.ENDPOINT, "qwen3.8:27b") == 131072
+
+    def test_override_wins_for_exact_model(self, monkeypatch):
+        self._ollama(monkeypatch)
+        monkeypatch.setenv("ODYSSEUS_CONTEXT_OVERRIDES", "other:7b=8192, qwen3.8:27b=32768")
+        assert model_context.get_context_length_known(self.ENDPOINT, "qwen3.8:27b") == (32768, True)
+        assert model_context.budget_context_for_model(self.ENDPOINT, "qwen3.8:27b") == 32768
+
+    def test_override_is_exact_match_only(self, monkeypatch):
+        self._ollama(monkeypatch)
+        monkeypatch.setenv("ODYSSEUS_CONTEXT_OVERRIDES", "qwen3.8:27b=32768")
+        assert model_context.get_context_length(self.ENDPOINT, "qwen3.8:8b") == 131072
+
+    def test_bad_override_entries_are_ignored(self, monkeypatch):
+        self._ollama(monkeypatch)
+        monkeypatch.setenv("ODYSSEUS_CONTEXT_OVERRIDES", "qwen3.8:27b=lots,=5,junk")
+        assert model_context.get_context_length(self.ENDPOINT, "qwen3.8:27b") == 131072
