@@ -9,6 +9,7 @@ from src.chat_helpers import extract_urls
 from src.youtube_handler import is_youtube_url
 from src.search import comprehensive_web_search, fetch_webpage_content
 from src.prompt_security import UNTRUSTED_CONTEXT_POLICY, untrusted_context_message
+from src.agent_rules import load_agent_rules
 
 logger = logging.getLogger(__name__)
 
@@ -302,6 +303,10 @@ class ChatProcessor:
                 "role": "system",
                 "content": preset_system_prompt
             })
+        # Operator rules file: every turn, whatever preset or persona is active.
+        agent_rules = load_agent_rules()
+        if agent_rules:
+            preface.append({"role": "system", "content": agent_rules})
         preface.append({
             "role": "system",
             "content": UNTRUSTED_CONTEXT_POLICY,
