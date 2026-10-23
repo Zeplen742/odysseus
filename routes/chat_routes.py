@@ -2589,7 +2589,7 @@ def setup_chat_routes(
             _explicit_web_intent = (
                 _explicit_url_target
                 or bool(re.search(
-                r"\b(search|look\s+(?:(?:this|that|it|them|these|those)\s*)?up|lookup|find\s*out|google|browse|web|online|latest|current|today|news|weather|forecast|rate|exchange\s+rate)\b",
+                r"\b(search|look\s+(?:(?:this|that|it|them|these|those)\s*)?up|lookup|find\s*out|google|browse|web|online|news|weather|forecast|exchange\s+rate)\b",
                 _msg_l,
                 ))
                 or requires_external_web_verification(message)

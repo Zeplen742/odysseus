@@ -11,6 +11,7 @@ Each patch is one commit, so the branch can be rebased onto the next release:
 | fix(agent): pin file and web tools every turn | a release carries stateful file/web tools across vague follow-ups (#4365) |
 | fix(context): let the environment override a model's context size | a release detects Ollama context sizes (#5613, PR #5800) |
 | feat: operator rules file sent every turn | upstream gains an always-on instructions setting |
+| fix(chat): bare current/latest/today/rate no longer strip file tools | upstream's explicit-web-intent regex stops matching bare words (`routes/chat_routes.py`) |
 | ci: build this fork's image | never; it is how the image is built |
 
 ## Rules file
