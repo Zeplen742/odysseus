@@ -12,6 +12,7 @@ Each patch is one commit, so the branch can be rebased onto the next release:
 | fix(context): let the environment override a model's context size | a release detects Ollama context sizes (#5613, PR #5800) |
 | feat: operator rules file sent every turn | upstream gains an always-on instructions setting |
 | fix(chat): bare current/latest/today/rate no longer strip file tools | upstream's explicit-web-intent regex stops matching bare words (`routes/chat_routes.py`) |
+| fix(context): trimming keeps the user request in long agent turns | a release includes upstream dev's latest-user anchor in `trim_for_context` (backported from dev) |
 | ci: build this fork's image | never; it is how the image is built |
 
 ## Rules file

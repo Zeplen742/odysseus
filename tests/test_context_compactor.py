@@ -108,6 +108,96 @@ class TestTrimForContext:
         assert "pasted message was too large" in trimmed[-1]["content"]
         assert "old-0" not in "\n".join(str(m.get("content", "")) for m in trimmed)
 
+    def test_keeps_latest_user_request_before_bulky_tool_outputs(self):
+        messages = [
+            {"role": "system", "content": "You are helpful."},
+            {"role": "user", "content": "test"},
+            {"role": "assistant", "content": "Test received."},
+            {
+                "role": "user",
+                "content": "My son found regular snail with shell and it makes bubbles. Is it poisonous?",
+            },
+            {
+                "role": "assistant",
+                "content": None,
+                "tool_calls": [
+                    {
+                        "id": "call_1",
+                        "type": "function",
+                        "function": {
+                            "name": "web_search",
+                            "arguments": '{"query":"are garden snails poisonous to touch"}',
+                        },
+                    }
+                ],
+            },
+            {"role": "tool", "tool_call_id": "call_1", "content": "garden snail result " * 2000},
+        ]
+
+        trimmed = trim_for_context(messages, context_length=2048, reserve_tokens=512)
+        joined = "\n".join(str(m.get("content", "")) for m in trimmed)
+
+        assert "snail" in joined
+        assert "poisonous" in joined
+        assert "Test received" not in joined
+
+    def test_textual_tool_result_does_not_replace_active_user_request(self):
+        messages = [
+            {"role": "system", "content": "Follow the active request."},
+            {
+                "role": "user",
+                "content": "Apply both changes, inspect the resulting state, and report it.",
+            },
+            {"role": "assistant", "content": "first tool call " * 300},
+            {
+                "role": "user",
+                "content": "UNTRUSTED SOURCE DATA\n" + ("first result " * 500),
+                "metadata": {
+                    "trusted": False,
+                    "source": "tool execution results",
+                },
+            },
+            {"role": "assistant", "content": "second tool call " * 300},
+            {
+                "role": "user",
+                "content": "UNTRUSTED SOURCE DATA\n" + ("second result " * 500),
+                "metadata": {
+                    "trusted": False,
+                    "source": "tool execution results",
+                },
+            },
+        ]
+
+        trimmed = trim_for_context(messages, context_length=1024, reserve_tokens=512)
+        joined = "\n".join(str(message.get("content", "")) for message in trimmed)
+
+        assert "Apply both changes" in joined
+        assert "inspect the resulting state" in joined
+
+    def test_long_agent_turn_keeps_its_user_request(self):
+        """A 19-round tool loop must not trim away the request that started it."""
+        messages = [
+            {"role": "system", "content": "You are helpful."},
+            {"role": "user", "content": "Add the text trueline to the slim15 thumb STL."},
+        ]
+        for i in range(19):
+            messages.append({
+                "role": "assistant",
+                "content": f"step {i}",
+                "tool_calls": [{
+                    "id": f"call_{i}",
+                    "type": "function",
+                    "function": {"name": "bash", "arguments": '{"command": "python3 section.py"}'},
+                }],
+            })
+            messages.append({"role": "tool", "tool_call_id": f"call_{i}", "content": f"result {i} " * 300})
+
+        trimmed = trim_for_context(messages, context_length=4096, reserve_tokens=512)
+
+        user_msgs = [m for m in trimmed if m.get("role") == "user"]
+        assert user_msgs and "slim15 thumb" in user_msgs[0]["content"]
+        assert cc.estimate_tokens(trimmed) <= 4096 - 512
+
 
 class TestContentAsText:
     def test_string_passthrough(self):
