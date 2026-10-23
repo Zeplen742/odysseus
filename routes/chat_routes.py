@@ -284,6 +284,13 @@ def _ensure_current_request_is_latest_user(messages: List[Dict[str, Any]], curre
     return repaired
 
 
+# Local patch: an explicit web intent strips the file and shell tools, so bare
+# words common in coding requests ("the current text", "the latest version",
+# "rate this") must not trigger it. classify_tool_intent still catches the real
+# lookups ("current price", "latest news", "weather today", "exchange rate").
+_EXPLICIT_WEB_INTENT_RE = re.compile(
+    r"\b(search|look\s*up|lookup|google|browse|web|online|news|weather|forecast|exchange\s+rate)\b"
+)
 _WEB_FOLLOWUP_RE = re.compile(
     r"^\s*(?:(?:can|could|would|will)\s+you\s+)?"
     r"(?:check|try\s+again|look(?:\s+now|\s+it\s+up)?|search(?:\s+now|\s+online|\s+it)?|"
@@ -1037,10 +1044,7 @@ def setup_chat_routes(
         _explicit_browser_intent = False
         if isinstance(message, str):
             _msg_l = message.lower()
-            _explicit_web_intent = bool(re.search(
-                r"\b(search|look\s*up|lookup|google|browse|web|online|latest|current|today|news|weather|forecast|rate|exchange\s+rate)\b",
-                _msg_l,
-            ))
+            _explicit_web_intent = bool(_EXPLICIT_WEB_INTENT_RE.search(_msg_l))
             _explicit_browser_intent = bool(re.search(
                 r"\b(browser|browse|open\s+(?:the\s+)?(?:site|page|url|link)|"
                 r"click|fill(?:\s+out)?|submit|send\s+(?:the\s+)?form|"

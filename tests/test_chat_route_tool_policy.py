@@ -342,3 +342,55 @@ def test_frontend_sends_explicit_allow_web_search_false_in_agent_mode():
     assert "fd.append('allow_web_search', el('web-toggle').checked ? 'true' : 'false')" in source, (
         "Frontend must send explicit allow_web_search=false in agent mode when toggle is off"
     )
+
+
+def _explicit_web_intent_re():
+    tree = ast.parse(_CHAT_ROUTES.read_text(encoding="utf-8"))
+    for node in tree.body:
+        if isinstance(node, ast.Assign) and any(
+            isinstance(t, ast.Name) and t.id == "_EXPLICIT_WEB_INTENT_RE" for t in node.targets
+        ):
+            import re
+            return re.compile(node.value.args[0].value)
+    raise AssertionError("_EXPLICIT_WEB_INTENT_RE not found in chat_routes.py")
+
+
+@pytest.mark.parametrize(
+    "message",
+    [
+        "i want you to make a small edit to the slim15 thumb. i want text saying trueline on the end oposite of the current text.",
+        "bump the package to the latest version",
+        "fix the bug in today's commit",
+        "rate this function's readability",
+        "update the current README",
+    ],
+)
+def test_local_work_words_do_not_trigger_explicit_web_intent(message):
+    """Bare current/latest/today/rate must not strip file and shell tools."""
+    assert not _explicit_web_intent_re().search(message.lower())
+
+
+@pytest.mark.parametrize(
+    "message",
+    [
+        "search the web for current CVEs",
+        "look up the weather in Fort Wayne",
+        "what's the exchange rate for euros",
+        "google it",
+    ],
+)
+def test_web_requests_still_trigger_explicit_web_intent(message):
+    assert _explicit_web_intent_re().search(message.lower())
+
+
+@pytest.mark.parametrize(
+    "message",
+    [
+        "what's the current price of gold",
+        "latest news about the election",
+    ],
+)
+def test_bare_word_lookups_still_classified_as_web(message):
+    """Lookups that relied on the dropped bare words are caught by classify_tool_intent."""
+    intent = classify_tool_intent(message)
+    assert intent is not None and intent.category == "web"
