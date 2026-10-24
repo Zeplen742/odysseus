@@ -162,17 +162,86 @@ def lmstudio_supports_vision(url: str, model: str) -> Optional[bool]:
     return None
 
 
+# base URL -> (llama.cpp /v1/models entries | [] when not llama.cpp, expiry)
+_llamacpp_models_cache: dict = {}
+_MMPROJ_ARGS = {"--mmproj", "-mm", "--mmproj-url", "-mmu"}
+
+
+def _llamacpp_base(url: str) -> str:
+    parsed = urlparse(url)
+    host = parsed.hostname or ""
+    authority = host if parsed.port is None else f"{host}:{parsed.port}"
+    path = parsed.path.rstrip("/")
+    if path.endswith("/v1"):
+        path = path[:-3]
+    return f"{parsed.scheme or 'http'}://{authority}{path}"
+
+
+def llamacpp_supports_vision(url: str, model: str) -> Optional[bool]:
+    """Whether llama.cpp serves `model` with a vision projector, or None when
+    the endpoint isn't llama.cpp or doesn't say (so callers fall back).
+
+    Local patch. A llama.cpp router lists every model with its launch args,
+    even unloaded ones, so `--mmproj` there answers without loading anything;
+    a single-model llama-server reports `modalities.vision` in /props. Name
+    matching can't tell: the same model may be served with or without one.
+    """
+    if not model or not _is_local_host(urlparse(url).hostname):
+        return None
+    base = _llamacpp_base(url)
+    now = time.time()
+    cached = _llamacpp_models_cache.get(base)
+    if cached is not None and cached[1] > now:
+        entries = cached[0]
+    else:
+        try:
+            r = httpx.get(f"{base}/v1/models", timeout=1.0)
+            data = r.json() if r.is_success else {}
+        except Exception:
+            return None
+        rows = data.get("data") if isinstance(data, dict) else None
+        entries = [
+            m for m in (rows if isinstance(rows, list) else [])
+            if isinstance(m, dict) and m.get("owned_by") == "llamacpp"
+        ]
+        _llamacpp_models_cache[base] = (entries, now + _PROVIDER_FINGERPRINT_TTL)
+    if not entries:
+        return None
+    want = model.strip().lower()
+    for m in entries:
+        names = {str(m.get("id", "")).lower()}
+        names.update(str(a).lower() for a in (m.get("aliases") or []))
+        if want not in names:
+            continue
+        status = m.get("status")
+        args = status.get("args") if isinstance(status, dict) else None
+        if isinstance(args, list):
+            if "--no-mmproj" in args:
+                return False
+            return any(str(a) in _MMPROJ_ARGS for a in args)
+        break
+    try:
+        r = httpx.get(f"{base}/props", timeout=1.0)
+        props = r.json() if r.is_success else {}
+    except Exception:
+        return None
+    modalities = props.get("modalities") if isinstance(props, dict) else None
+    vision = modalities.get("vision") if isinstance(modalities, dict) else None
+    return vision if isinstance(vision, bool) else None
+
+
 def model_supports_vision(model_name: str, endpoint_url: str = "") -> bool:
     """Whether a model accepts images, using the endpoint's reported
-    capability when available (LM Studio) and falling back to name-based
-    detection otherwise."""
+    capability when available (LM Studio, llama.cpp) and falling back to
+    name-based detection otherwise."""
     if endpoint_url:
-        try:
-            advertised = lmstudio_supports_vision(endpoint_url, model_name or "")
-        except Exception:
-            advertised = None
-        if advertised is not None:
-            return advertised
+        for probe in (lmstudio_supports_vision, llamacpp_supports_vision):
+            try:
+                advertised = probe(endpoint_url, model_name or "")
+            except Exception:
+                advertised = None
+            if advertised is not None:
+                return advertised
     return is_vision_model(model_name)
 
 
