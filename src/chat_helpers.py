@@ -171,10 +171,11 @@ def _llamacpp_base(url: str) -> str:
     parsed = urlparse(url)
     host = parsed.hostname or ""
     authority = host if parsed.port is None else f"{host}:{parsed.port}"
-    path = parsed.path.rstrip("/")
-    if path.endswith("/v1"):
-        path = path[:-3]
-    return f"{parsed.scheme or 'http'}://{authority}{path}"
+    # Callers pass the base (".../v1") or the full route (".../v1/chat/completions").
+    path = parsed.path
+    if "/v1" in path:
+        path = path[:path.index("/v1")]
+    return f"{parsed.scheme or 'http'}://{authority}{path.rstrip('/')}"
 
 
 def llamacpp_supports_vision(url: str, model: str) -> Optional[bool]:

@@ -65,6 +65,13 @@ class TestLlamacppSupportsVision:
         _serve(monkeypatch, ROUTER_MODELS)
         assert chat_helpers.llamacpp_supports_vision(URL, "qwen3.8-27b") is True
 
+    def test_full_chat_completions_url(self, monkeypatch):
+        # The agent loop passes the full route, not the /v1 base.
+        calls = _serve(monkeypatch, ROUTER_MODELS)
+        url = "http://192.168.68.60:8080/v1/chat/completions"
+        assert chat_helpers.llamacpp_supports_vision(url, "qwen3.8-27b") is True
+        assert calls == ["http://192.168.68.60:8080/v1/models"]
+
     def test_router_model_without_mmproj_is_blind(self, monkeypatch):
         _serve(monkeypatch, ROUTER_MODELS)
         assert chat_helpers.llamacpp_supports_vision(URL, "glm-4.7-flash") is False
