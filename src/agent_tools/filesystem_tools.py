@@ -1,4 +1,5 @@
 import asyncio
+import base64
 import json
 import os
 import re
@@ -239,6 +240,41 @@ class EditFileTool:
             result["diff"] = diff
         return result
 
+# Local patch: read_file on an image returns the image itself, which the agent
+# loop attaches for models that can see (a text read just returned mojibake).
+_IMAGE_MIME_TYPES = {
+    ".png": "image/png", ".jpg": "image/jpeg", ".jpeg": "image/jpeg",
+    ".webp": "image/webp", ".gif": "image/gif",
+}
+MAX_IMAGE_READ_BYTES = 8 * 1024 * 1024
+
+
+async def _read_image(path: str, mime: str) -> dict:
+    def _read():
+        with open(path, "rb") as f:
+            return f.read(MAX_IMAGE_READ_BYTES + 1)
+    try:
+        data = await asyncio.to_thread(_read)
+    except FileNotFoundError:
+        return {"error": f"read_file: {path}: not found", "exit_code": 1}
+    except PermissionError:
+        return {"error": f"read_file: {path}: permission denied", "exit_code": 1}
+    except IsADirectoryError:
+        return {"error": f"read_file: {path}: is a directory (use ls)", "exit_code": 1}
+    except OSError as e:
+        return {"error": f"read_file: {path}: {e}", "exit_code": 1}
+    if len(data) > MAX_IMAGE_READ_BYTES:
+        return {"error": f"read_file: {path}: image is over 8 MB", "exit_code": 1}
+    return {
+        "output": (
+            f"[image {path}, {max(1, len(data) // 1024)} KB, {mime}. If you can see images it is "
+            "attached after the tool results; otherwise you can't view it.]"
+        ),
+        "images": [{"data": base64.b64encode(data).decode("ascii"), "mimeType": mime}],
+        "exit_code": 0,
+    }
+
+
 class ReadFileTool:
     async def execute(self, content: str, ctx: dict) -> dict:
         from src.tool_execution import _resolve_tool_path, _resolve_search_root, _truncate
@@ -256,6 +292,9 @@ class ReadFileTool:
             path = _resolve_tool_path(raw_path)
         except ValueError as e:
             return {"error": f"read_file: {e}", "exit_code": 1}
+        image_mime = _IMAGE_MIME_TYPES.get(os.path.splitext(path)[1].lower())
+        if image_mime:
+            return await _read_image(path, image_mime)
         try:
             def _read():
                 if offset > 0 or limit > 0:

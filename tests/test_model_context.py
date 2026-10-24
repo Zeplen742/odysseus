@@ -6,7 +6,7 @@ import types
 import pytest
 
 import src.model_context as model_context
-from src.model_context import is_local_endpoint, estimate_tokens, _lookup_known
+from src.model_context import IMAGE_TOKEN_ESTIMATE, is_local_endpoint, estimate_tokens, _lookup_known
 
 
 class _Column:
@@ -135,8 +135,9 @@ class TestEstimateTokens:
             }
         ]
         tokens = estimate_tokens(messages)
-        # 4 overhead + int(19 * 0.3) for the text item; image_url is ignored
-        assert tokens == 4 + int(19 * 0.3)
+        # 4 overhead + int(19 * 0.3) for the text item + a flat estimate for the
+        # image (local patch: images cost a vision model real context)
+        assert tokens == 4 + int(19 * 0.3) + IMAGE_TOKEN_ESTIMATE
 
     def test_missing_content_key(self):
         messages = [{"role": "assistant"}]

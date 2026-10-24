@@ -509,6 +509,9 @@ def _query_context_length(endpoint_url: str, model: str) -> Tuple[int, bool]:
     return DEFAULT_CONTEXT, False
 
 
+IMAGE_TOKEN_ESTIMATE = 1000
+
+
 def estimate_tokens(messages: List[Dict]) -> int:
     """Rough token estimate for a list of messages.
 
@@ -530,6 +533,10 @@ def estimate_tokens(messages: List[Dict]) -> int:
             for item in content:
                 if isinstance(item, dict) and item.get("type") == "text":
                     total += int(len(item.get("text", "")) * 0.3)
+                elif isinstance(item, dict) and item.get("type") == "image_url":
+                    # Local patch: an image costs a vision model real context
+                    # (Qwen: ~400 tokens for one 600 px view, more for a sheet).
+                    total += IMAGE_TOKEN_ESTIMATE
         # Tool calls carry real payload too: a tool-only assistant turn is stored
         # with content=None and the actual args (e.g. a create_document body) in
         # tool_calls[].function.arguments. Ignoring them made large tool arguments

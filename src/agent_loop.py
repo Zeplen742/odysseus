@@ -2990,6 +2990,43 @@ def _resolve_tool_blocks(
     return tool_blocks, used_native, converted_calls
 
 
+# Local patch: images a tool returns (browser screenshots, read_file on a PNG)
+# used to reach only the UI. For a model that can see, they go to the next
+# round as untrusted context, at most _MAX_TOOL_IMAGES per round.
+_MAX_TOOL_IMAGES = 4
+
+
+def _tool_images_message(tool_result_records: list) -> Optional[Dict]:
+    images, names, arm_gate = [], [], False
+    for record in tool_result_records or []:
+        result = record.get("result")
+        found = result.get("images") if isinstance(result, dict) else None
+        if not found:
+            continue
+        names.append(str(record.get("tool_name") or "tool"))
+        arm_gate = arm_gate or tool_result_should_arm_gate(
+            record.get("tool_name"), result, record.get("content"),
+        )
+        for img in found:
+            if isinstance(img, dict) and img.get("data") and len(images) < _MAX_TOOL_IMAGES:
+                images.append(img)
+    if not images:
+        return None
+    msg = untrusted_context_message(
+        "tool result images",
+        f"{len(images)} image(s) returned by {', '.join(dict.fromkeys(names))}, attached below.",
+        arm_tool_gate=arm_gate,
+    )
+    msg["content"] = [{"type": "text", "text": msg["content"]}] + [
+        {
+            "type": "image_url",
+            "image_url": {"url": f"data:{img.get('mimeType') or 'image/png'};base64,{img['data']}"},
+        }
+        for img in images
+    ]
+    return msg
+
+
 def _append_tool_results(
     messages: List[Dict],
     round_response: str,
@@ -3000,6 +3037,7 @@ def _append_tool_results(
     round_num: int,
     round_reasoning: str = "",
     tool_result_records: Optional[list] = None,
+    attach_images: bool = False,
 ):
     """Append tool execution results back into the message history for the next LLM round.
 
@@ -3114,6 +3152,10 @@ def _append_tool_results(
                 arm_tool_gate=arm_tool_gate,
             )
         )
+    if attach_images:
+        image_msg = _tool_images_message(tool_result_records)
+        if image_msg:
+            messages.append(image_msg)
 
 
 def _compute_final_metrics(
@@ -4768,6 +4810,10 @@ async def stream_agent_loop(
         )
         _approved_result_injected = True
 
+    # Local patch: whether to attach tool-returned images; checked once, the
+    # first time a tool returns one.
+    _tool_images_supported: Optional[bool] = None
+
     for round_num in range(1, max_rounds + 1):
         round_response = ""
         round_reasoning = ""  # reasoning_content deltas (DeepSeek-thinking, vLLM --reasoning-parser)
@@ -6285,10 +6331,23 @@ async def stream_agent_loop(
         # tool_blocks but stayed in native_tool_calls, so indexing results by
         # native position mis-attached each result to the wrong tool_call_id
         # (and left the real call answered empty).
+        if _tool_images_supported is None and any(
+            isinstance(r.get("result"), dict) and r["result"].get("images")
+            for r in tool_result_records
+        ):
+            from src.chat_helpers import model_supports_vision
+            _tool_images_supported = await asyncio.to_thread(
+                model_supports_vision, model, endpoint_url
+            )
+            logger.info(
+                "[agent] tool returned images; model %s sees images: %s",
+                model, _tool_images_supported,
+            )
         _append_tool_results(messages, round_response, converted_calls,
                              tool_results, tool_result_texts, used_native, round_num,
                              round_reasoning=round_reasoning,
-                             tool_result_records=tool_result_records)
+                             tool_result_records=tool_result_records,
+                             attach_images=bool(_tool_images_supported))
 
         # Emit agent_step event
         yield (
