@@ -419,6 +419,25 @@ def _resolve_workspace_from_message_path(request, message: str) -> tuple[str, st
     return "", ""
 
 
+def _auto_workspace_from_message(request, message: str) -> tuple[str, bool]:
+    """(workspace to bind, whether to escalate to agent mode) for a message
+    that names a local path.
+
+    Local patch: a path the file tools can already reach (the agent workspace,
+    temp, tool_path_extra_roots) escalates without binding. Binding confines
+    every tool to that one folder, so "read <kit>/README.md, then save to the
+    agent workspace" locked the agent out of the very place it was told to
+    save, and it left its files in the project folder instead.
+    """
+    found, _ = _resolve_workspace_from_message_path(request, message)
+    if not found:
+        return "", False
+    from src.tool_execution import path_within_tool_roots
+    if path_within_tool_roots(found):
+        return "", True
+    return found, True
+
+
 def _session_url_matches_endpoint(session_url: str, endpoint_base: str) -> bool:
     if not session_url or not endpoint_base:
         return False
@@ -1290,14 +1309,18 @@ def setup_chat_routes(
                     _workspace_agent_intent = False
                     logger.info("chat→agent auto-escalation: contextual browser/form follow-up")
             if not workspace and isinstance(message, str):
-                _auto_workspace, _ = _resolve_workspace_from_message_path(request, message)
-                if _auto_workspace:
-                    workspace = _auto_workspace
+                _auto_workspace, _auto_escalate = _auto_workspace_from_message(request, message)
+                if _auto_escalate:
+                    if _auto_workspace:
+                        workspace = _auto_workspace
                     chat_mode = "agent"
                     auto_escalated = True
                     _workspace_agent_intent = True
                     allow_bash = "true"
-                    logger.info("chat→agent auto-escalation: explicit path workspace=%s", workspace)
+                    logger.info(
+                        "chat→agent auto-escalation: explicit path workspace=%s",
+                        workspace or "(none: path already within the tool roots)",
+                    )
         except SessionNotFoundError as e:
             raise HTTPException(404, str(e))
         except (ValueError, ValidationError):

@@ -354,6 +354,23 @@ def _tool_path_roots() -> list[str]:
     return out
 
 
+def path_within_tool_roots(path: str) -> bool:
+    """Whether `path` already sits under a default tool root (the agent
+    workspace and user data dirs, temp, tool_path_extra_roots), i.e. reachable
+    without binding a workspace."""
+    resolved = os.path.realpath(os.path.expanduser(str(path or "")))
+    if not resolved:
+        return False
+    for root in _tool_path_roots():
+        real_root = os.path.realpath(root)
+        try:
+            if os.path.commonpath([resolved, real_root]) == real_root:
+                return True
+        except ValueError:
+            continue
+    return False
+
+
 def _resolve_tool_path(raw_path: str) -> str:
     """Resolve and confine a model-supplied path.
 
