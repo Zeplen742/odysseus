@@ -13,6 +13,7 @@ Each patch is one commit, so the branch can be rebased onto the next release:
 | feat: operator rules file sent every turn | upstream gains an always-on instructions setting |
 | fix(chat): bare current/latest/today/rate no longer strip file tools | upstream's explicit-web-intent regex stops matching bare words (`routes/chat_routes.py`) |
 | feat: vision models see tool images (llama.cpp vision check, read_file on images, image token estimate) | upstream asks llama.cpp whether a model has a projector, and read_file returns images |
+| perf(context): trimming keeps the prompt prefix stable; rules never trimmed | upstream trims in blocks/stubs (or caches the cut) and protects the rules file (`context_compactor.py`, `chat_processor.py`) |
 | fix(chat): naming a reachable path no longer locks the agent into that folder | upstream skips the message-path workspace bind for paths the default tool roots already allow (`routes/chat_routes.py`) |
 | feat: vision models see tool images (llama.cpp vision check, read_file on images) | upstream sends tool-returned images to vision models and asks llama.cpp whether a model has a projector |
 | fix(context): trimming keeps the user request in long agent turns | a release includes upstream dev's latest-user anchor in `trim_for_context` (backported from dev) |

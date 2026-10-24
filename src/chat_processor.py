@@ -311,12 +311,16 @@ class ChatProcessor:
                 "content": preset_system_prompt
             })
         # Operator rules file: every turn, whatever preset or persona is active.
+        # Local patch: _protected, because trim_for_context keeps only the first
+        # system message when it trims, so long agent runs lost the rules (and
+        # the untrusted-content policy) partway through.
         agent_rules = load_agent_rules()
         if agent_rules:
-            preface.append({"role": "system", "content": agent_rules})
+            preface.append({"role": "system", "content": agent_rules, "_protected": True})
         preface.append({
             "role": "system",
             "content": UNTRUSTED_CONTEXT_POLICY,
+            "_protected": True,
         })
 
         if character_name and persona_memory:

@@ -302,6 +302,32 @@ def _truncate_message_to_token_budget(msg: Dict[str, Any], token_budget: int) ->
     return _truncate_tool_call_args(out, token_budget)
 
 
+# Local patch: trimming that keeps the prompt prefix stable from round to round.
+# Each agent round re-trims the full history. Dropping one old message per round
+# and re-splitting the tool tail into ever-smaller equal shares changed the
+# prompt right after the system prompt every round, so llama.cpp could reuse
+# only about half its KV cache and re-read ~14K tokens per round. Now trimming
+# moves in blocks, and older tool-tail messages shrink to fixed stubs that are
+# identical every round: most rounds only append, and the cache holds.
+_TRIM_BLOCK = 6          # messages dropped or stubbed at a time
+_TAIL_KEEP_FULL = 4      # newest tool-tail messages always kept whole
+_TAIL_STUB_TOKENS = 160  # size of an older tool-tail message's stub
+
+
+def _stub_message(msg: Dict[str, Any]) -> Dict[str, Any]:
+    """Fixed-size stand-in for an older tool-tail message (same every round)."""
+    out = msg
+    content = msg.get("content")
+    if isinstance(content, list):
+        texts = [i for i in content if isinstance(i, dict) and i.get("type") == "text"]
+        images = sum(1 for i in content if isinstance(i, dict) and i.get("type") == "image_url")
+        out = dict(msg)
+        out["content"] = texts + (
+            [{"type": "text", "text": f"[{images} older image(s) left out to save context]"}] if images else []
+        )
+    return _truncate_message_to_token_budget(out, _TAIL_STUB_TOKENS)
+
+
 def trim_for_context(messages: List[Dict], context_length: int, reserve_tokens: int = 512) -> List[Dict]:
     """Trim system messages to fit within context_length.
 
@@ -433,12 +459,27 @@ def trim_for_context(messages: List[Dict], context_length: int, reserve_tokens: 
         old_msgs = prior_convo[:-recent_prior_count] if recent_prior_count else prior_convo[:]
         recent_msgs = (prior_convo[-recent_prior_count:] if recent_prior_count else []) + current_tail
         while old_msgs and estimate_tokens(essential_system + old_msgs + recent_msgs) > budget:
-            old_msgs.pop(0)
+            del old_msgs[:_TRIM_BLOCK]
         convo_msgs = old_msgs + recent_msgs
     else:
         while prior_convo and estimate_tokens(essential_system + prior_convo + current_tail) > budget:
-            prior_convo.pop(0)
+            del prior_convo[:_TRIM_BLOCK]
         convo_msgs = prior_convo + current_tail
+
+    # Still too large: shrink the tool tail after the request, stably. Older
+    # messages become fixed stubs in blocks (the cut only moves every
+    # _TRIM_BLOCK messages), then the oldest stubs go, a block at a time.
+    if len(current_tail) > 1 and estimate_tokens(essential_system + protected_msgs + convo_msgs) > budget:
+        tail_start = len(convo_msgs) - len(current_tail)
+        head, rest = current_tail[:1], current_tail[1:]
+        cutoff = max(0, (len(rest) - _TAIL_KEEP_FULL) // _TRIM_BLOCK * _TRIM_BLOCK)
+        stable = [_stub_message(m) for m in rest[:cutoff]] + rest[cutoff:]
+        prefix = essential_system + protected_msgs + convo_msgs[:tail_start] + head
+        drop = 0
+        while drop < cutoff and estimate_tokens(prefix + stable[drop:]) > budget:
+            drop += _TRIM_BLOCK
+        current_tail = head + stable[min(drop, cutoff):]
+        convo_msgs[tail_start:] = current_tail
 
     # If the current request + tool tail is still too large, shrink that tail
     # instead of dropping the latest user turn. Native tool responses can be
