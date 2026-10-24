@@ -83,6 +83,12 @@ RUN pip install --no-cache-dir -r requirements.txt \
 # lib installed above; see the apt note near the top of this stage.
 RUN pip install --no-cache-dir python-magic==0.4.27
 
+# 3D modelling libraries for the agent's bash tool, pinned in their own file.
+# Installed system-wide so they survive workspace resets (a user-site install
+# under the agent's HOME is wiped along with the workspace).
+COPY requirements-3d.txt ./
+RUN pip install --no-cache-dir -r requirements-3d.txt
+
 # Pre-install the patched basicsr/gfpgan/facexlib wheels built in the
 # realesrgan-wheels stage (--no-deps keeps the image lean — torch & friends are
 # pulled only when realesrgan is actually installed). With these dists already
