@@ -4969,6 +4969,12 @@ import { loadPanel } from './panels.js';
     // set (not _backgroundStreams) so checkBackgroundStream doesn't mistake this
     // for a same-tab POST stream and spawn its own spinner+poll on re-entry.
     _resumingStreams.add(sessionId);
+    // Show Stop while a re-attached run is live; without this a second device (a
+    // phone reopening a chat started elsewhere) sees the send/+ New button and has no way to stop it.
+    const _resumeBtn = document.querySelector('.send-btn');
+    if (_resumeBtn && sessionModule.getCurrentSessionId() === sessionId) {
+      updateSubmitButton('streaming', _resumeBtn);
+    }
 
     const holder = document.createElement('div');
     holder.className = 'msg msg-ai';
@@ -5007,6 +5013,9 @@ import { loadPanel } from './panels.js';
     const cleanup = () => {
       try { spinner.destroy(); } catch (_) {}
       _resumingStreams.delete(sessionId);
+      if (_resumeBtn && sessionModule.getCurrentSessionId() === sessionId && !_getForegroundStreamState()) {
+        updateSubmitButton('idle', _resumeBtn);
+      }
     };
 
     const renderDelta = () => {
