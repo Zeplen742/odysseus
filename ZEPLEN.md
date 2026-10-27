@@ -17,6 +17,7 @@ Each patch is one commit, so the branch can be rebased onto the next release:
 | fix(chat): naming a reachable path no longer locks the agent into that folder | upstream skips the message-path workspace bind for paths the default tool roots already allow (`routes/chat_routes.py`) |
 | feat: vision models see tool images (llama.cpp vision check, read_file on images) | upstream sends tool-returned images to vision models and asks llama.cpp whether a model has a projector |
 | fix(context): trimming keeps the user request in long agent turns | a release includes upstream dev's latest-user anchor in `trim_for_context` (backported from dev) |
+| perf(chat): saved tool output and diffs render when expanded | upstream renders saved agent threads lazily (`static/js/chatRenderer.js`) |
 | build: 3D modelling libraries in the image | never; local need (`requirements-3d.txt`, `Dockerfile`) |
 | ci: build this fork's image | never; it is how the image is built |
 

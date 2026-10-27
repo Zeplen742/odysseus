@@ -3390,7 +3390,7 @@ export function addMessage(role, content, modelName, metadata) {
             const ok = (ev.exit_code === 0 || ev.exit_code == null);
             let outHtml = '';
             if (!_suppressRawToolOutput(ev.tool, ok) && ev.output && ev.output.trim()) {
-              outHtml = `<details class="agent-tool-output"><summary>Output</summary><pre>${esc(ev.output)}</pre></details>`;
+              outHtml = `<details class="agent-tool-output" data-lazy="output"><summary>Output</summary><pre></pre></details>`;
             }
             const screenshotSrc = safeToolScreenshotSrc(ev.screenshot);
             if (_isPrivateBrowserTool(ev.tool)) {
@@ -3403,6 +3403,7 @@ export function addMessage(role, content, modelName, metadata) {
             // File-write/edit diff (persisted in the tool event) \u2014 re-render it
             // so it survives reload, matching the live stream.
             let evDiffHtml = '';
+            let lazyDiffRows = null;
             if (ev.diff && ev.diff.text) {
               const d = ev.diff;
               const stat = [
@@ -3410,7 +3411,8 @@ export function addMessage(role, content, modelName, metadata) {
                 d.added ? `<span class="diff-stat-add">+${d.added}</span>` : '',
                 d.removed ? `<span class="diff-stat-del">\u2212${d.removed}</span>` : '',
               ].filter(Boolean).join(' ');
-              const rows = d.text.split('\n').map(line => {
+              // Rows are built on first expand: a long write_file diff is thousands of spans.
+              const buildRows = () => d.text.split('\n').map(line => {
                 let cls = 'diff-ctx', text = line;
                 if (line.startsWith('+++') || line.startsWith('---')) cls = 'diff-meta';
                 else if (line.startsWith('@@')) cls = 'diff-hunk';
@@ -3420,7 +3422,8 @@ export function addMessage(role, content, modelName, metadata) {
                 else if (line.startsWith(' ')) { text = line.slice(1); }
                 return `<span class="${cls}">${esc(text) || '&nbsp;'}</span>`;
               }).join('');  // spans are display:block \u2014 a literal \n would double-space
-              evDiffHtml = `<details class="agent-tool-output agent-tool-diff"><summary><span class="diff-file">${esc(d.file || 'diff')}</span> <span class="diff-summary-stats">${stat}</span></summary><pre class="diff-pre">${rows}</pre></details>`;
+              lazyDiffRows = buildRows;
+              evDiffHtml = `<details class="agent-tool-output agent-tool-diff" data-lazy="diff"><summary><span class="diff-file">${esc(d.file || 'diff')}</span> <span class="diff-summary-stats">${stat}</span></summary><pre class="diff-pre"></pre></details>`;
             }
             const node = document.createElement('div');
             const browserTool = _isPrivateBrowserTool(ev.tool);
@@ -3432,6 +3435,15 @@ export function addMessage(role, content, modelName, metadata) {
             const evToolIcon = renderToolIcon(ev.tool, ev.command, ev);
             const evCmdHtml = browserTool ? '' : (evToolInfo.commandHtml || ((ev.command && !(ev.diff && ev.diff.text)) ? `<pre class="agent-thread-cmd">${esc(ev.command)}</pre>` : ''));
             node.innerHTML = `<div class="agent-thread-dot"></div><div class="agent-thread-header"><span class="agent-thread-icon">${ok ? '\u2713' : '\u2717'}</span>${evToolIcon}<span class="agent-thread-tool">${esc(evToolInfo.label || ev.tool)}</span>${evHeaderAction}<span class="agent-thread-status">${ok ? 'done' : 'failed'}</span><span class="agent-thread-chevron" aria-hidden="true"></span></div><div class="agent-thread-content">${evCmdHtml}${outHtml}${evDiffHtml}</div>`;
+            // Fill the collapsed sections only when the user opens them, so
+            // reloading a long job does not render every tool output at once.
+            node.querySelectorAll('details[data-lazy]').forEach(det => {
+              det.addEventListener('toggle', () => {
+                if (det.dataset.lazy === 'output') det.querySelector('pre').textContent = ev.output;
+                else if (lazyDiffRows) det.querySelector('pre').innerHTML = lazyDiffRows();
+                det.removeAttribute('data-lazy');
+              }, { once: true });
+            });
             // Click handling is delegated globally \u2014 see chat.js init.
             threadWrap.appendChild(node);
           }
