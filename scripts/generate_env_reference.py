@@ -552,6 +552,17 @@ VARIABLE_NOTES: dict[str, tuple[str, str, str]] = {
         "The default resolves to the bundled scripts directory relative to the installed/source tree.",
     ),
 
+    "ODYSSEUS_CONTEXT_OVERRIDES": (
+        "Agent loop and tool execution", USER,
+        "Comma-separated `model=tokens` pairs that set the context window Odysseus "
+        "assumes for a model, for servers that do not report it or report more than "
+        "the agent can use once tool schemas are counted.",
+    ),
+    "ODYSSEUS_AGENT_RULES_FILE": (
+        "Agent loop and tool execution", USER,
+        "Path to a text file of operator rules added as a system message on every "
+        "chat and agent turn, read on each request. Defaults to `data/agent_rules.md`.",
+    ),
     # -- Browser automation -------------------------------------------------
     "ODYSSEUS_BROWSER_EXECUTABLE": (
         "Browser automation", USER,
