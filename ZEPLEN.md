@@ -18,6 +18,7 @@ Each patch is one commit, so the branch can be rebased onto the next release:
 | feat: vision models see tool images (llama.cpp vision check, read_file on images) | upstream sends tool-returned images to vision models and asks llama.cpp whether a model has a projector |
 | fix(context): trimming keeps the user request in long agent turns | a release includes upstream dev's latest-user anchor in `trim_for_context` (backported from dev) |
 | perf(chat): saved tool output and diffs render when expanded | upstream renders saved agent threads lazily (`static/js/chatRenderer.js`) |
+| fix(containment): backport of upstream PR #6849 (bubblewrap in the image; a re-bound same request is not a delegation) | PR #6849 / issue #6766 merged in a release |
 | build: 3D modelling libraries in the image | never; local need (`requirements-3d.txt`, `Dockerfile`) |
 | ci: build this fork's image | never; it is how the image is built |
 
