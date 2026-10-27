@@ -751,14 +751,12 @@ def test_frontend_sends_explicit_allow_web_search_false_in_agent_mode():
 
 
 def _explicit_web_intent_re():
-    tree = ast.parse(_CHAT_ROUTES.read_text(encoding="utf-8"))
-    for node in tree.body:
-        if isinstance(node, ast.Assign) and any(
-            isinstance(t, ast.Name) and t.id == "_EXPLICIT_WEB_INTENT_RE" for t in node.targets
-        ):
-            import re
-            return re.compile(node.value.args[0].value)
-    raise AssertionError("_EXPLICIT_WEB_INTENT_RE not found in chat_routes.py")
+    """The keyword regex inside the explicit-web-intent expression in chat_routes.py."""
+    import re
+    text = _CHAT_ROUTES.read_text(encoding="utf-8")
+    m = re.search(r'r"(\\b\(search\|look\\s\+[^"\n]*)",\n', text)
+    assert m, "explicit web intent regex not found in chat_routes.py"
+    return re.compile(m.group(1))
 
 
 @pytest.mark.parametrize(
