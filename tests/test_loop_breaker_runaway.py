@@ -59,3 +59,14 @@ def test_threshold_is_configurable():
 
 def test_empty_is_not_runaway():
     assert _detect_runaway_call(collections.Counter()) is None
+
+
+def test_call_sig_tells_scripts_with_a_shared_header_apart():
+    from types import SimpleNamespace
+    from src.agent_loop import _tool_call_sig
+    header = "import sys; sys.path.insert(0, '/kit')\nfrom build123d import *\nfrom cadkit import *\n" * 2
+    a = SimpleNamespace(tool_type="bash", content=header + "print(1)")
+    b = SimpleNamespace(tool_type="bash", content=header + "print(2)")
+    assert _tool_call_sig(a) != _tool_call_sig(b)
+    assert _tool_call_sig(a) == _tool_call_sig(SimpleNamespace(tool_type="bash", content=header + "print(1)"))
+    assert _detect_runaway_call(collections.Counter({_tool_call_sig(a): 15})) == "bash"

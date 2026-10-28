@@ -8,6 +8,7 @@ The LLM decides when to use tools by writing fenced code blocks.
 
 import asyncio
 import collections
+import hashlib
 import json
 import re
 import time
@@ -3445,13 +3446,22 @@ def build_active_plan_note(approved_plan: str) -> str:
     )
 
 
+def _tool_call_sig(block) -> str:
+    """Loop-breaker signature of a tool call: the tool, a short readable prefix and a hash
+    of the whole content. A bare 120-char prefix made distinct scripts that share the same
+    import header look identical."""
+    content = (block.content or "").strip()
+    digest = hashlib.sha1(content.encode("utf-8", "replace")).hexdigest()[:12]
+    return f"{block.tool_type}:{content[:60]}#{digest}"
+
+
 def _detect_runaway_call(call_freq, threshold=15):
     """Tool name of a call signature repeated >= ``threshold`` times — a real
     runaway loop. Counts IDENTICAL repeated calls (same tool AND args), so a
     legitimate batch of distinct calls to one tool (e.g. creating 18 calendar
     events at once) is NOT flagged. Returns ``None`` when nothing is runaway.
 
-    ``call_freq`` is a Counter keyed by ``"{tool_type}:{content[:120]}"``.
+    ``call_freq`` is a Counter keyed by ``_tool_call_sig`` (tool, prefix, content hash).
     """
     sig = next((s for s, n in call_freq.items() if n >= threshold), None)
     return sig.split(":", 1)[0] if sig else None
@@ -5605,11 +5615,11 @@ async def stream_agent_loop(
         # runaway backstop). On bail we don't give up — we force one
         # tool-free round so the model declares done or declares blocked,
         # mirroring Terminus's explicit-completion handshake.
-        _sig = "|".join(sorted(f"{b.tool_type}:{(b.content or '').strip()[:120]}" for b in tool_blocks))
+        _sig = "|".join(sorted(_tool_call_sig(b) for b in tool_blocks))
         _is_repeat = _sig in _recent_call_sigs
         _recent_call_sigs.append(_sig)
         for _b in tool_blocks:
-            _call_freq[f"{_b.tool_type}:{(_b.content or '').strip()[:120]}"] += 1
+            _call_freq[_tool_call_sig(_b)] += 1
         # "Real" answer text = round text minus <think> blocks. Empty-think
         # rounds (just "<think>\n\n</think>" + a tool call) must not read as
         # progress, so strip think before checking.
