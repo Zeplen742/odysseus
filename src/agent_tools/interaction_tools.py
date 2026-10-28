@@ -93,3 +93,29 @@ class UpdatePlanTool:
         }
         logger.info("Tool executed: %s", desc)
         return desc, result
+
+class LoadToolsTool:
+    async def execute(self, content, ctx):
+        """
+        load_tools (local patch, ODYSSEUS_TOOLS_ON_REQUEST): the agent asks for
+        a tool group. Validates the names and returns `loaded_groups`; the agent
+        loop adds those groups' tools from the next round on.
+        """
+        from src.tool_groups import TOOL_GROUPS, parse_groups
+
+        known, unknown = parse_groups(content)
+        if unknown or not known:
+            valid = ", ".join(TOOL_GROUPS)
+            bad = f"Unknown group(s): {', '.join(unknown)}. " if unknown else ""
+            return "load_tools: invalid", {
+                "error": f"{bad}Valid groups: {valid}.",
+                "exit_code": 1,
+            }
+        desc = f"load_tools: {', '.join(known)}"
+        result = {
+            "loaded_groups": known,
+            "output": f"Loaded {', '.join(known)}. Call those tools directly in your next tool call.",
+            "exit_code": 0,
+        }
+        logger.info("Tool executed: %s", desc)
+        return desc, result

@@ -18,8 +18,25 @@ Each patch is one commit, so the branch can be rebased onto the next release:
 | fix(context): trimming keeps the user request in long agent turns | a release includes upstream dev's latest-user anchor in `trim_for_context` (backported from dev) |
 | perf(chat): saved tool output and diffs render when expanded | upstream renders saved agent threads lazily (`static/js/chatRenderer.js`) |
 | fix(chat): a re-attached run shows the Stop button | upstream's resumeStream() sets the send button to its streaming state (`static/js/chat.js`) |
+| fix(agent): llama.cpp LFM models get native tools | upstream's `model_supports_tools` recognises LFM models (`src/agent_loop.py`) |
+| fix(agent): loop-breaker compares whole tool calls, not a 120-char prefix | upstream's loop-breaker signature covers the whole call (`src/agent_loop.py`) |
+| feat: ODYSSEUS_DISABLE_BROWSER_MCP skips only the browser MCP server | upstream can turn off one built-in MCP server (`src/builtin_mcp.py`) |
+| feat(agent): tools on request, round status line, tool schemas in the trim budget | upstream loads tools on demand, tells the model its round/context use, and budgets tool schemas (`src/tool_groups.py`, `src/agent_loop.py`) |
 | build: 3D modelling libraries in the image | never; local need (`requirements-3d.txt`, `Dockerfile`) |
 | ci: build this fork's image | never; it is how the image is built |
+
+## Agent flags (all off by default)
+
+- `ODYSSEUS_TOOLS_ON_REQUEST=1`: an agent turn starts with the always-available
+  tools plus the groups the chat already loaded; the model calls `load_tools`
+  for anything else (groups in `src/tool_groups.py`). No retrieval guess, so a
+  vague "continue" no longer drags in ~30 browser tools.
+- `ODYSSEUS_ROUND_STATUS=1`: each round's last tool result ends with
+  `[odysseus status: step N of M · context X% full · ...]`. Facts only; what
+  to do at each flag belongs in the rules file.
+- `ODYSSEUS_TRIM_COUNTS_TOOLS=1`: the tool schemas sent with a request come
+  out of the trim budget, so a context override can be the served window minus
+  room for the reply instead of a hand-tuned guess at schema size.
 
 ## Rules file
 

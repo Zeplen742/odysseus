@@ -113,6 +113,7 @@ _COMMON_TOOL_NAMES = {
     "ui_control",
     "update_document",
     "update_plan",
+    "load_tools",
     "vault_get",
     "vault_search",
     "vault_unlock",

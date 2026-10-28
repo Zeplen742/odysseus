@@ -1295,6 +1295,12 @@ FUNCTION_TOOL_SCHEMAS = [
     },
 ]
 
+# Local patch: tools on request (src/tool_groups.py). The agent loop only
+# offers it when ODYSSEUS_TOOLS_ON_REQUEST is set.
+from src.tool_groups import load_tools_schema as _load_tools_schema  # noqa: E402
+
+FUNCTION_TOOL_SCHEMAS.append(_load_tools_schema())
+
 
 # ---------------------------------------------------------------------------
 # Converter: native function call -> ToolBlock

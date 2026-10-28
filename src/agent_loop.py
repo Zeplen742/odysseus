@@ -13,6 +13,7 @@ import json
 import re
 import time
 import logging
+import os
 from typing import Any, AsyncGenerator, List, Dict, Optional, Set
 from urllib.parse import urlparse
 
@@ -25,6 +26,13 @@ from src.llm_core import (
     _normalize_usage_counts,
 )
 from src.model_context import estimate_tokens
+from src.tool_groups import (
+    LOAD_TOOLS_NAME,
+    loaded_groups,
+    remember_groups,
+    tools_for_groups,
+    tools_on_request_enabled,
+)
 from src.context_compactor import (
     apply_compaction_state,
     apply_compaction_state_for_session,
@@ -72,6 +80,50 @@ from src.agent_tools import (
 logger = logging.getLogger(__name__)
 
 _BROWSER_MCP_PREFIX = "mcp__builtin_browser__"
+
+
+def _trim_counts_tools_enabled() -> bool:
+    return os.environ.get("ODYSSEUS_TRIM_COUNTS_TOOLS", "").lower() in ("1", "true", "yes")
+
+
+def _round_status_enabled() -> bool:
+    return os.environ.get("ODYSSEUS_ROUND_STATUS", "").lower() in ("1", "true", "yes")
+
+
+# Context share at which the status line starts asking for a NOTES.md
+# checkpoint, and the share where trimming starts cutting older steps.
+_STATUS_WARN_AT = 0.70
+_STATUS_CUT_AT = 0.85
+
+
+def _round_status_line(round_num: int, max_rounds: int, used_tokens: int, context_length: int) -> str:
+    """One status line for the end of a round's tool results (local patch).
+
+    Facts only, no instructions: models rightly distrust orders that arrive
+    inside tool output. What to do at each flag belongs in the operator rules
+    file, which is trusted."""
+    parts = [f"step {round_num} of {max_rounds}"]
+    share = (used_tokens / context_length) if context_length and context_length > 0 else 0.0
+    if share:
+        parts.append(f"context {min(100, round(share * 100))}% full")
+    if share >= _STATUS_CUT_AT:
+        parts.append("older steps being cut from view")
+    elif share >= _STATUS_WARN_AT:
+        parts.append("context high")
+    if max_rounds and max_rounds - round_num <= 5:
+        parts.append(f"{max(0, max_rounds - round_num)} steps left")
+    return "\n\n[odysseus status: " + " · ".join(parts) + "]"
+
+
+def _schema_token_estimate(schemas) -> int:
+    """Rough token cost of the tool schemas sent with a request (same 0.3
+    tokens per char as estimate_tokens)."""
+    if not schemas:
+        return 0
+    try:
+        return int(len(json.dumps(schemas, ensure_ascii=False)) * 0.3)
+    except (TypeError, ValueError):
+        return 0
 
 
 def _expand_browser_mcp_tools(tool_names: Set[str], mcp_mgr) -> Set[str]:
@@ -756,6 +808,7 @@ If the user asks for a reminder/alarm before the event, pass `reminder_minutes` 
     "pipeline": "- ```pipeline``` — Run a multi-step AI pipeline. Args (JSON) with ordered steps, each specifying a model and prompt. Use for complex workflows.",
     "ui_control": "- ```ui_control``` — Control the UI: toggle tools on/off, OPEN PANELS, open email reply drafts, switch models, change themes. Commands: `toggle <name> on/off` (names: bash/shell, web/search, research, incognito, document_editor/documents), `open_panel <name>` (panels: documents, gallery, email, sessions, notes, memories/brain, skills, settings, cookbook), `open_email_reply <uid> <folder> <reply|reply-all|ai-reply> <body text>` (opens an email compose document pre-filled with body, DOES NOT send; use this for normal “write/draft a reply saying X” requests), `set_mode agent/chat`, `switch_model <name>`, `set_theme <preset>`, `create_theme <name> <bg> <fg> <panel> <border> <accent>` (optional key=val for advanced colors AND background effects: bgPattern=<none|dots|synapse|rain|constellations|perlin-flow|petals|sparkles|embers>, bgEffectColor=#RRGGBB, bgEffectIntensity=<num>, bgEffectSize=<num>, frosted=true|false). \"open documents\" / \"open library\" / \"show gallery\" / \"open inbox\" / \"open notes\" / \"open cookbook\" all map to `open_panel <name>`. Built-in theme presets: dark, light, midnight, paper, cyberpunk, retrowave, forest, ocean, ume, copper, terminal, organs, lavender, gpt, claude, cute. For any other vibe/name, use create_theme.",
     "ask_user": "- ```ask_user``` — Ask the user a multiple-choice question when the task is genuinely ambiguous and the answer changes what you do next (pick an approach, confirm an assumption, choose a target). Args (JSON): {\"question\": \"...\", \"options\": [{\"label\": \"...\", \"description\": \"...\"?}, ...], \"multi\": false?}. 2-6 options. The user gets clickable buttons; calling this ENDS your turn and their choice comes back as your next message. Prefer sensible defaults — only ask when you truly can't proceed well without their input.",
+    "load_tools": "- ```load_tools``` — Load another tool group for this job. Args (JSON): {\"groups\": [\"browser\"]}. Call the loaded tools directly in your next tool call.",
     "update_plan": "- ```update_plan``` — While executing an approved plan, write the plan back: tick steps done or revise them. Args (JSON): {\"plan\": \"- [x] done step\\n- [ ] next step\"}. Always pass the COMPLETE checklist, not a diff. Call it after finishing each step (mark it `- [x]`) and whenever the user asks to change the plan. The user's docked plan window updates live. Does nothing if there's no active plan.",
     "list_served_models": "- ```list_served_models``` — Show what the Cookbook (LLM-serving subsystem) is currently running. NO args. Use this for ANY 'what's running' / 'what's serving' / 'show my cookbook' / 'is anything up' query. DO NOT shell out (`ps aux`, `docker ps`, etc.) — this tool is the source of truth. Failed serve tasks include recent logs plus diagnosis/retry suggestions; use those suggestions to call `serve_model` again with an adjusted command when appropriate.",
     "stop_served_model": "- ```stop_served_model``` — Stop a running model server. Args (JSON): {\"session_id\": \"<from list_served_models>\"}. Use for 'kill my cookbook' / 'stop the model' / 'shut down vLLM'.",
@@ -3919,6 +3972,16 @@ async def stream_agent_loop(
     _t1 = time.time()
     if _relevant_tools:
         logger.info(f"[tool-rag] Using caller-provided relevant_tools ({len(_relevant_tools)} tools)")
+    # Local patch: tools on request. Start from the always-available tools plus
+    # the groups this chat already loaded, and let the model call load_tools for
+    # anything else, instead of retrieval guessing tools from the wording.
+    if not guide_only and not _relevant_tools and tools_on_request_enabled():
+        from src.tool_index import ALWAYS_AVAILABLE
+        _relevant_tools = set(ALWAYS_AVAILABLE) | tools_for_groups(loaded_groups(session_id))
+        logger.info(
+            "[tool-rag] Tools on request; loaded groups=%s",
+            sorted(loaded_groups(session_id)),
+        )
     if not guide_only and not _relevant_tools and _low_signal_turn:
         from src.tool_index import ALWAYS_AVAILABLE
         if workspace:
@@ -4078,6 +4141,11 @@ async def stream_agent_loop(
             from src.tool_index import ALWAYS_AVAILABLE
             _relevant_tools = set(ALWAYS_AVAILABLE)
         _relevant_tools.update(forced_set)
+
+    # Tools on request: whatever path chose the set (domains, workspace
+    # toolset, caller), keep load_tools and the chat's loaded groups in it.
+    if not guide_only and _relevant_tools is not None and tools_on_request_enabled():
+        _relevant_tools |= {LOAD_TOOLS_NAME} | tools_for_groups(loaded_groups(session_id))
 
     if not guide_only and _relevant_tools is not None:
         _relevant_tools = _expand_browser_mcp_tools(_relevant_tools, mcp_mgr)
@@ -4253,8 +4321,13 @@ async def stream_agent_loop(
     _t2 = time.time()
     _route_context_lengths = {}
 
-    def _trim_route_request_messages(candidate_url, candidate_model, route_messages):
-        """Apply the candidate route's own context budget to its request."""
+    def _trim_route_request_messages(candidate_url, candidate_model, route_messages, route_state=None):
+        """Apply the candidate route's own context budget to its request.
+
+        Local patch: with ``route_state`` and ODYSSEUS_TRIM_COUNTS_TOOLS set,
+        the tool schemas sent alongside the messages come out of the budget
+        too, so a big tool list can't push the request past the served
+        window."""
 
         def _without_protection(items):
             # Route markers remain internal for later prompt rebuilding;
@@ -4298,6 +4371,12 @@ async def stream_agent_loop(
                 budget_is_explicit,
                 hard_max=hard_max,
             )
+            tool_tokens = (
+                _schema_token_estimate(_tool_schemas_for_route(route_state))
+                if route_state is not None and _trim_counts_tools_enabled() else 0
+            )
+            if tool_tokens:
+                effective_budget = max(effective_budget // 4, effective_budget - tool_tokens)
             trimmed_messages = trim_for_context(
                 route_messages,
                 effective_budget,
@@ -4307,12 +4386,13 @@ async def stream_agent_loop(
             if after_trim_tokens < before_trim_tokens:
                 logger.info(
                     "[agent] soft-trimmed route model=%s context: %s -> %s tokens "
-                    "(budget=%s, reserve=%s)",
+                    "(budget=%s, reserve=%s, tools=%s)",
                     candidate_model,
                     before_trim_tokens,
                     after_trim_tokens,
                     effective_budget,
                     reserve_tokens,
+                    tool_tokens,
                 )
             return _without_protection(trimmed_messages)
         except Exception as e:
@@ -4557,9 +4637,19 @@ async def stream_agent_loop(
                     schema for schema in FUNCTION_TOOL_SCHEMAS
                     if schema.get("function", {}).get("name") not in _ADMIN_SCHEMA_NAMES
                 ]
+                # Every tool is already here, so there is nothing to load.
+                base_schemas = [
+                    schema for schema in base_schemas
+                    if schema.get("function", {}).get("name") != LOAD_TOOLS_NAME
+                ]
                 schemas = base_schemas + route_mcp_schemas
             if route_state["ody_qwen_finetune_model"]:
                 schemas = []
+            if not tools_on_request_enabled():
+                schemas = [
+                    schema for schema in schemas
+                    if schema.get("function", {}).get("name") != LOAD_TOOLS_NAME
+                ]
             if disabled_tools:
                 schemas = [
                     schema for schema in schemas
@@ -4846,6 +4936,15 @@ async def stream_agent_loop(
         }
         if round_num == 1 and not _approved_result_injected:
             _active_route_state["request_messages"] = _initial_route_request_messages
+            if _trim_counts_tools_enabled():
+                # The first trim ran before the tool list existed; trim again
+                # so the round-1 schemas come out of the budget too.
+                _active_route_state["request_messages"] = _trim_route_request_messages(
+                    endpoint_url,
+                    model,
+                    _initial_route_request_messages,
+                    _active_route_state,
+                )
         all_tool_schemas = _tool_schemas_for_route(_active_route_state)
         agent_stream_timeout = int(get_setting("agent_stream_timeout_seconds", 300) or 300)
 
@@ -4898,6 +4997,7 @@ async def stream_agent_loop(
                     candidate_url,
                     candidate_model,
                     state["messages"],
+                    state,
                 )
                 state["request_messages"] = request_messages
             _last_route_request_messages = request_messages
@@ -5185,6 +5285,7 @@ async def stream_agent_loop(
                                     endpoint_url,
                                     model,
                                     answering_state["messages"],
+                                    answering_state,
                                 )
                                 answering_state["context_length"] = _route_context_lengths.get(
                                     (endpoint_url, model),
@@ -6353,6 +6454,40 @@ async def stream_agent_loop(
                 "[agent] tool returned images; model %s sees images: %s",
                 model, _tool_images_supported,
             )
+        # Tools on request: groups loaded this round join the tool list from
+        # the next round on, and stay for the rest of the chat.
+        if tools_on_request_enabled() and _relevant_tools is not None:
+            _new_groups = [
+                group
+                for record in tool_result_records
+                if record.get("tool_name") == LOAD_TOOLS_NAME
+                and isinstance(record.get("result"), dict)
+                for group in record["result"].get("loaded_groups") or []
+            ]
+            if _new_groups:
+                remember_groups(session_id, _new_groups)
+                _relevant_tools = _expand_browser_mcp_tools(
+                    set(_relevant_tools) | tools_for_groups(_new_groups), mcp_mgr
+                )
+                logger.info("[agent] load_tools round=%s groups=%s", round_num, _new_groups)
+
+        # Round status: the model can't see its round count or context use,
+        # so rules like "checkpoint before context runs out" had nothing to go
+        # on. Appended to the newest tool result and stored with it, so the
+        # earlier messages (and the server's prompt cache) never change.
+        if _round_status_enabled() and tool_result_texts:
+            _status = _round_status_line(
+                round_num,
+                max_rounds,
+                estimate_tokens(messages)
+                + sum(int(len(t) * 0.3) for t in tool_result_texts)
+                + _schema_token_estimate(all_tool_schemas),
+                _last_route_context_length or context_length,
+            )
+            tool_result_texts[-1] = tool_result_texts[-1] + _status
+            if tool_results:
+                tool_results[-1] = tool_results[-1] + _status
+
         _append_tool_results(messages, round_response, converted_calls,
                              tool_results, tool_result_texts, used_native, round_num,
                              round_reasoning=round_reasoning,
