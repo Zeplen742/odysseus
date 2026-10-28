@@ -43,6 +43,20 @@ _MCP_TOKEN_MAX = 40   # max chars per rendered name / type token
 _MCP_HINT_MAX = 300   # total-length backstop for the whole hint
 
 
+def _debug_log_discovered(server_id: str, tools: List[Dict]) -> None:
+    """Local patch (ODYSSEUS_DEBUG_MCP_ARGS): log what discovery stored for a
+    tool, to tell an MCP server sending empty schemas from the app emptying them."""
+    if os.environ.get("ODYSSEUS_DEBUG_MCP_ARGS", "").lower() not in ("1", "true", "yes"):
+        return
+    empty = [t.get("name") for t in tools if not (t.get("input_schema") or {}).get("properties")]
+    nav = next((t for t in tools if t.get("name") == "browser_navigate"), None)
+    logger.info(
+        "[mcp-debug] discovered %s: %d tools, %d without properties; browser_navigate=%s",
+        server_id, len(tools), len(empty),
+        json.dumps(nav.get("input_schema"), default=str)[:300] if nav else "-",
+    )
+
+
 def _sanitize_schema_token(value: Any, limit: int = _MCP_TOKEN_MAX) -> str:
     """Make an untrusted JSON-Schema token safe to splice into the prompt.
 
@@ -229,6 +243,7 @@ class McpManager:
                 self._sessions[server_id] = session
                 self._stacks[server_id] = stack
                 self._tools[server_id] = tools
+                _debug_log_discovered(server_id, tools)
                 self._connections[server_id] = {
                     "status": "connected",
                     "name": name,
@@ -599,6 +614,11 @@ class McpManager:
                     },
                 }
                 schemas.append(schema)
+                if tool["name"] == "browser_navigate" and os.environ.get("ODYSSEUS_DEBUG_MCP_ARGS", "").lower() in ("1", "true", "yes"):
+                    logger.info(
+                        "[mcp-debug] openai schema %s params=%s",
+                        qualified, json.dumps(schema["function"]["parameters"], default=str)[:300],
+                    )
 
         return schemas
 
