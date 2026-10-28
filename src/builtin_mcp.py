@@ -87,6 +87,8 @@ _BUILTIN_NPX_SERVERS = {
 
 # Global flag to disable MCP if there are compatibility issues
 MCP_DISABLED = os.environ.get("ODYSSEUS_DISABLE_MCP", "").lower() in ("1", "true", "yes")
+# Skip only the Playwright browser server (about 30 tools, ~20K tokens of schemas per round).
+BROWSER_MCP_DISABLED = os.environ.get("ODYSSEUS_DISABLE_BROWSER_MCP", "").lower() in ("1", "true", "yes")
 BROWSER_MCP_REQUIRE_CACHE = os.environ.get("ODYSSEUS_BROWSER_MCP_REQUIRE_CACHE", "").lower() in ("1", "true", "yes")
 
 
@@ -203,6 +205,9 @@ async def register_builtin_servers(mcp_manager):
     async def _start_npx_servers():
         await asyncio.sleep(3)  # let Python servers finish first
         for server_id, cfg in _BUILTIN_NPX_SERVERS.items():
+            if server_id == "builtin_browser" and BROWSER_MCP_DISABLED:
+                logger.info(f"{cfg['name']} disabled via ODYSSEUS_DISABLE_BROWSER_MCP")
+                continue
             # Browser automation is a shipped built-in, so the default path
             # lets `npx -y` install @playwright/mcp on first start. Locked-down
             # installs can opt back into the old no-network startup behavior
