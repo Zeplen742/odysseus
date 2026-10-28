@@ -3013,6 +3013,11 @@ def _resolve_tool_blocks(
                 tool_blocks.append(block)
                 converted_calls.append(tc)
                 logger.info(f"  -> converted: {tc_name} -> {block.tool_type}")
+                if block.tool_type.startswith("mcp__") and os.environ.get("ODYSSEUS_DEBUG_MCP_ARGS", "").lower() in ("1", "true", "yes"):
+                    logger.info(
+                        "[mcp-debug] converted %s raw=%r block=%r",
+                        tc_name, str(tc_args)[:200], block.content[:200],
+                    )
             else:
                 logger.warning(f"  -> FAILED to convert native call: {tc_name} args={tc_args[:200]}")
         if tool_blocks:

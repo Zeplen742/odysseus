@@ -18,6 +18,26 @@ from urllib.parse import urlparse
 
 logger = logging.getLogger(__name__)
 
+
+def _debug_mcp_args_enabled() -> bool:
+    """Local patch: ODYSSEUS_DEBUG_MCP_ARGS=1 logs MCP tool schemas and call
+    arguments (first 200 chars) at each stage, to find where arguments go missing."""
+    return os.environ.get("ODYSSEUS_DEBUG_MCP_ARGS", "").lower() in ("1", "true", "yes")
+
+
+def _debug_log_mcp_schemas(tools) -> None:
+    if not _debug_mcp_args_enabled():
+        return
+    for tool in tools or []:
+        fn = (tool or {}).get("function") or {}
+        name = str(fn.get("name") or "")
+        if not name.startswith("mcp__"):
+            continue
+        params = fn.get("parameters")
+        props = params.get("properties") if isinstance(params, dict) else None
+        if name.endswith("browser_navigate") or not props:
+            logger.info("[mcp-debug] schema sent %s params=%s", name, json.dumps(params, default=str)[:300])
+
 _LOCAL_MODEL_LOCK = asyncio.Lock()
 _LOCAL_MODEL_WAITING_FOREGROUND = 0
 _LOCAL_MODEL_CURRENT: Dict[str, object] = {}
@@ -2643,6 +2663,7 @@ async def _stream_llm_inner(url: str, model: str, messages: List[Dict], temperat
             payload[tok_key] = max_tokens
         if tools:
             payload["tools"] = _alias_harmony_tools(tools, model)
+            _debug_log_mcp_schemas(payload["tools"])
         elif tool_choice_none:
             payload["tool_choice"] = "none"
         # Mistral thinking-capable models — send reasoning_effort so Mistral
@@ -3066,6 +3087,10 @@ async def _stream_llm_inner(url: str, model: str, messages: List[Dict], temperat
         if not _tc_acc:
             return None
         calls = [_tc_acc[i] for i in sorted(_tc_acc)]
+        if _debug_mcp_args_enabled():
+            for call in calls:
+                if str(call.get("name") or "").startswith("mcp__"):
+                    logger.info("[mcp-debug] stream assembled %s args=%r", call.get("name"), str(call.get("arguments"))[:200])
         return f'data: {json.dumps({"type": "tool_calls", "calls": calls})}\n\n'
 
     def _format_routed_content(parts: List[Tuple[str, bool]]) -> List[str]:

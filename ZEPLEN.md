@@ -22,6 +22,7 @@ Each patch is one commit, so the branch can be rebased onto the next release:
 | fix(agent): loop-breaker compares whole tool calls, not a 120-char prefix | upstream's loop-breaker signature covers the whole call (`src/agent_loop.py`) |
 | feat: ODYSSEUS_DISABLE_BROWSER_MCP skips only the browser MCP server | upstream can turn off one built-in MCP server (`src/builtin_mcp.py`) |
 | feat(agent): tools on request, round status line, tool schemas in the trim budget | upstream loads tools on demand, tells the model its round/context use, and budgets tool schemas (`src/tool_groups.py`, `src/agent_loop.py`) |
+| debug: ODYSSEUS_DEBUG_MCP_ARGS logs MCP schemas and call arguments; pin Playwright MCP 0.0.83 | the empty-arguments browser bug is found and fixed (drop the logging; keep a pin) |
 | build: 3D modelling libraries in the image | never; local need (`requirements-3d.txt`, `Dockerfile`) |
 | ci: build this fork's image | never; it is how the image is built |
 
@@ -37,6 +38,11 @@ Each patch is one commit, so the branch can be rebased onto the next release:
 - `ODYSSEUS_TRIM_COUNTS_TOOLS=1`: the tool schemas sent with a request come
   out of the trim budget, so a context override can be the served window minus
   room for the reply instead of a hand-tuned guess at schema size.
+
+- `ODYSSEUS_DEBUG_MCP_ARGS=1`: logs `[mcp-debug]` lines for MCP tools only
+  (first 200 chars): the schema sent for `browser_navigate` and any MCP tool
+  with empty parameters, the arguments as assembled from the stream, as
+  converted, and as passed to the MCP server.
 
 ## Rules file
 

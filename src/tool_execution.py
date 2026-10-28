@@ -1333,6 +1333,8 @@ async def _execute_tool_block_impl(
                 if tool.startswith("mcp__email__") and owner:
                     args = dict(args)
                     args[_EMAIL_MCP_OWNER_ARG] = owner
+                if os.environ.get("ODYSSEUS_DEBUG_MCP_ARGS", "").lower() in ("1", "true", "yes") and not tool.startswith("mcp__email__"):
+                    logger.info("[mcp-debug] executing %s content=%r args=%r", tool, (content or "")[:200], json.dumps(args, default=str)[:200])
                 result = await mcp.call_tool(tool, args)
         else:
             desc = f"mcp: {tool}"
