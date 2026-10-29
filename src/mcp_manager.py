@@ -43,6 +43,24 @@ _MCP_TOKEN_MAX = 40   # max chars per rendered name / type token
 _MCP_HINT_MAX = 300   # total-length backstop for the whole hint
 
 
+def _tool_input_schema(tool: Any) -> Dict:
+    """A discovered tool's JSON input schema, whichever MCP SDK built it.
+
+    Local patch: mcp 1.x names the field ``inputSchema``; 2.x renames it
+    ``input_schema`` (``inputSchema`` is only the wire alias). Reading just the
+    1.x name turned every tool schema into {} under 2.x, so the model was told
+    no tool takes arguments and every call arrived empty."""
+    for attr in ("inputSchema", "input_schema"):
+        value = getattr(tool, attr, None)
+        if value is None:
+            continue
+        if hasattr(value, "model_dump"):
+            value = value.model_dump(by_alias=True, exclude_none=True)
+        if isinstance(value, dict):
+            return value
+    return {}
+
+
 def _debug_log_discovered(server_id: str, tools: List[Dict]) -> None:
     """Local patch (ODYSSEUS_DEBUG_MCP_ARGS): log what discovery stored for a
     tool, to tell an MCP server sending empty schemas from the app emptying them."""
@@ -223,7 +241,7 @@ class McpManager:
                     tools.append({
                         "name": tool.name,
                         "description": tool.description or "",
-                        "input_schema": tool.inputSchema if hasattr(tool, "inputSchema") else {},
+                        "input_schema": _tool_input_schema(tool),
                         # MCP tool annotations (readOnlyHint / destructiveHint) drive
                         # plan-mode read-only gating. Absent on many servers, so we
                         # fall back to a name heuristic in mcp_tool_is_readonly().
@@ -293,7 +311,7 @@ class McpManager:
                     tools.append({
                         "name": tool.name,
                         "description": tool.description or "",
-                        "input_schema": tool.inputSchema if hasattr(tool, 'inputSchema') else {},
+                        "input_schema": _tool_input_schema(tool),
                         # MCP tool annotations (readOnlyHint / destructiveHint) drive
                         # plan-mode read-only gating. Absent on many servers, so we
                         # fall back to a name heuristic in mcp_tool_is_readonly().
@@ -380,7 +398,7 @@ class McpManager:
                 tools.append({
                     "name": tool.name,
                     "description": tool.description or "",
-                    "input_schema": tool.inputSchema if hasattr(tool, "inputSchema") else {},
+                    "input_schema": _tool_input_schema(tool),
                 })
 
             self._sessions[server_id] = session
