@@ -4990,10 +4990,30 @@ import { loadPanel } from './panels.js';
     const contentDiv = holder.querySelector('.stream-content');
     box.appendChild(holder);
 
-    const spinner = spinnerModule.create('Generating response...', 'right');
+    const spinner = spinnerModule.create('Working', 'right');
     holder.querySelector('.body').appendChild(spinner.createElement());
     spinner.start();
     uiModule.scrollHistory();
+
+    // Keep a live status under a re-attached run (a phone reopening a chat, a
+    // tab coming back) until it ends. The spinner used to vanish at the first
+    // token while steps, tools and thinking went unshown, so a long agent job
+    // looked frozen for minutes.
+    let _resumeStep = 0;
+    const _resumeToolLabel = (name) => {
+      const n = String(name || '');
+      if (n.startsWith('mcp__builtin_browser__')) return 'Browsing';
+      const labels = {
+        bash: 'Running', python: 'Running', read_file: 'Reading', grep: 'Searching files',
+        glob: 'Searching files', ls: 'Browsing files', write_file: 'Writing', edit_file: 'Editing',
+        apply_patch: 'Editing', web_search: 'Searching', web_fetch: 'Reading web',
+        load_tools: 'Loading tools', ask_user: 'Asking', manage_memory: 'Remembering',
+      };
+      return (labels[n] || 'Using') + ' ' + n.replace(/^mcp__[^_]+__/, '');
+    };
+    const _resumeStatus = (label) => {
+      try { spinner.updateMessage((_resumeStep ? 'Step ' + _resumeStep + ' · ' : '') + label); } catch (_) {}
+    };
 
     const reader = res.body.getReader();
     const decoder = new TextDecoder();
@@ -5063,7 +5083,8 @@ import { loadPanel } from './panels.js';
               docFenceOpened = true;
               rich = true;
             }
-            if (!gotDelta) { gotDelta = true; try { spinner.destroy(); } catch (_) {} }
+            gotDelta = true;
+            _resumeStatus(json.thinking ? 'Thinking' : 'Writing answer');
             renderDelta();
           } else if (json.type === 'doc_stream_open') {
             rich = true;
@@ -5137,6 +5158,13 @@ import { loadPanel } from './panels.js';
                      json.type === 'research_progress' || json.type === 'research_sources' ||
                      json.type === 'research_findings' || json.type === 'research_done') {
             rich = true;
+            if (json.type === 'agent_step' && json.round) {
+              _resumeStep = json.round;
+              _resumeStatus('Thinking');
+            } else if (json.type === 'tool_start') {
+              if (json.round) _resumeStep = json.round;
+              _resumeStatus(_resumeToolLabel(json.tool));
+            }
           }
         }
       }
