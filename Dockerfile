@@ -98,6 +98,18 @@ COPY --from=realesrgan-wheels /wheels/ /tmp/odysseus-wheels/
 RUN pip install --no-cache-dir --no-deps /tmp/odysseus-wheels/*.whl \
     && rm -rf /tmp/odysseus-wheels
 
+# Local patch: later `pip install` runs (the agent's `pip install --user`, the
+# Cookbook) may add packages but never change the versions this image ships.
+# A user-site install lives on the data volume, survives image updates and
+# comes first on sys.path, so a replaced numpy/mcp/fastapi broke the agent's
+# scripts and, before src/user_site_guard.py, the app. Unset PIP_CONSTRAINT
+# (e.g. `PIP_CONSTRAINT=` in compose) to allow upgrades again.
+RUN python -c "import importlib.metadata as m; skip = {'pip', 'setuptools', 'wheel'}; \
+pins = sorted({(d.metadata['Name'] or '').lower(): d.version for d in m.distributions() if d.metadata['Name']}.items()); \
+open('/usr/local/share/odysseus-pip-constraints.txt', 'w').write(''.join(f'{n}=={v}\\n' for n, v in pins if n not in skip))" \
+    && test -s /usr/local/share/odysseus-pip-constraints.txt
+ENV PIP_CONSTRAINT=/usr/local/share/odysseus-pip-constraints.txt
+
 # Copy app code
 COPY . .
 

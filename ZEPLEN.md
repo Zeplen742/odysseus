@@ -22,6 +22,7 @@ Each patch is one commit, so the branch can be rebased onto the next release:
 | fix(agent): loop-breaker compares whole tool calls, not a 120-char prefix | upstream's loop-breaker signature covers the whole call (`src/agent_loop.py`) |
 | feat: ODYSSEUS_DISABLE_BROWSER_MCP skips only the browser MCP server | upstream can turn off one built-in MCP server (`src/builtin_mcp.py`) |
 | feat(agent): tools on request, round status line, tool schemas in the trim budget | upstream loads tools on demand, tells the model its round/context use, and budgets tool schemas (`src/tool_groups.py`, `src/agent_loop.py`) |
+| build: pip may add packages but never change the image's versions | never; local need (`Dockerfile`, PIP_CONSTRAINT) |
 | fix(chat): a re-attached run keeps a live step/tool status | upstream's resumeStream() shows progress after the first token (`static/js/chat.js`) |
 | fix: the app and built-in MCP servers ignore user-site packages | upstream stops the app loading packages the agent installs with `pip --user` (`src/user_site_guard.py`, `app.py`) |
 | fix(mcp): read tool input schemas under the mcp 1.x and 2.x field names | upstream reads `input_schema` as well as `inputSchema` (`src/mcp_manager.py`) |
