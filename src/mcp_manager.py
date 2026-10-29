@@ -573,6 +573,7 @@ class McpManager:
         """Tear down and reconnect a crashed builtin MCP server."""
         import sys
         from src.builtin_mcp import _BUILTIN_SERVERS, builtin_python_env
+        from src.user_site_guard import no_user_site_env
 
         if server_id not in _BUILTIN_SERVERS:
             return False
@@ -591,7 +592,7 @@ class McpManager:
                 transport="stdio",
                 command=sys.executable,
                 args=[script_path],
-                env=builtin_python_env(base_dir),
+                env={**builtin_python_env(base_dir), **no_user_site_env()},
             )
             if ok:
                 logger.info(f"Reconnected builtin MCP server: {name}")

@@ -22,6 +22,7 @@ Each patch is one commit, so the branch can be rebased onto the next release:
 | fix(agent): loop-breaker compares whole tool calls, not a 120-char prefix | upstream's loop-breaker signature covers the whole call (`src/agent_loop.py`) |
 | feat: ODYSSEUS_DISABLE_BROWSER_MCP skips only the browser MCP server | upstream can turn off one built-in MCP server (`src/builtin_mcp.py`) |
 | feat(agent): tools on request, round status line, tool schemas in the trim budget | upstream loads tools on demand, tells the model its round/context use, and budgets tool schemas (`src/tool_groups.py`, `src/agent_loop.py`) |
+| fix: the app and built-in MCP servers ignore user-site packages | upstream stops the app loading packages the agent installs with `pip --user` (`src/user_site_guard.py`, `app.py`) |
 | fix(mcp): read tool input schemas under the mcp 1.x and 2.x field names | upstream reads `input_schema` as well as `inputSchema` (`src/mcp_manager.py`) |
 | debug: ODYSSEUS_DEBUG_MCP_ARGS logs MCP schemas and call arguments; pin Playwright MCP 0.0.83 | the empty-arguments browser bug is found and fixed (drop the logging; keep a pin) |
 | build: 3D modelling libraries in the image | never; local need (`requirements-3d.txt`, `Dockerfile`) |
@@ -44,6 +45,10 @@ Each patch is one commit, so the branch can be rebased onto the next release:
   (first 200 chars): the schema sent for `browser_navigate` and any MCP tool
   with empty parameters, the arguments as assembled from the stream, as
   converted, and as passed to the MCP server.
+
+- `ODYSSEUS_ALLOW_USER_SITE=1`: let the app and built-in MCP servers load
+  user-site packages again (off by default since 2026-10-29; the agent's own
+  shell and Python runs always see them).
 
 ## Rules file
 

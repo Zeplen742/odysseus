@@ -147,6 +147,9 @@ def _browser_mcp_args(args: list[str]) -> list[str]:
     return out
 
 
+from src.user_site_guard import no_user_site_env  # local patch: built-in servers skip the user site
+
+
 def builtin_python_env(base_dir: str) -> dict[str, str]:
     """Environment for built-in Python MCP subprocesses.
 
@@ -179,7 +182,7 @@ async def register_builtin_servers(mcp_manager):
                 transport="stdio",
                 command=python,
                 args=[script_path],
-                env=builtin_python_env(base_dir),
+                env={**builtin_python_env(base_dir), **no_user_site_env()},
             )
             if ok:
                 logger.info(f"Built-in MCP server registered: {name}")

@@ -5,6 +5,12 @@ import sys
 import asyncio
 import time
 
+# Local patch: run on the image's packages, not ones the agent pip-installed
+# into the user site (see src/user_site_guard.py). Before any app import.
+from src.user_site_guard import drop_user_site as _drop_user_site  # noqa: E402
+
+_dropped_user_site = _drop_user_site()
+
 # On Windows, asyncio.create_subprocess_exec/shell require the ProactorEventLoop.
 # When started via `python -m uvicorn` from a terminal, uvicorn sets this
 # automatically. But the VS Code debugger (and other non-uvicorn entrypoints)
@@ -120,6 +126,10 @@ except Exception as e:
     _root_logger.warning(f"Failed to initialize file logging handler (falling back to console-only): {e}")
 
 logger = logging.getLogger(__name__)
+logger.info(
+    "User-site packages ignored by the app: %s",
+    _dropped_user_site or "none on sys.path",
+)
 
 # ========= APP =========
 # Lifespan is defined below (after all helpers it references are in scope)
