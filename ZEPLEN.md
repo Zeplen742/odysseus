@@ -29,6 +29,7 @@ Each patch is one commit, so the branch can be rebased onto the next release:
 | debug: ODYSSEUS_DEBUG_MCP_ARGS logs MCP schemas and call arguments; pin Playwright MCP 0.0.83 | the empty-arguments browser bug is found and fixed (drop the logging; keep a pin) |
 | build: 3D modelling libraries in the image | never; local need (`requirements-3d.txt`, `Dockerfile`) |
 | ci: build this fork's image | never; it is how the image is built |
+| feat(chat): opt-in offset resume for detached runs | upstream's `GET /api/chat/resume` takes `after=` / `ids=1` (needed by the Android client in `android/`) |
 
 ## Agent flags (all off by default)
 
