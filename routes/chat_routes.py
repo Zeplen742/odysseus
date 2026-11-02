@@ -5012,8 +5012,20 @@ def setup_chat_routes(
         _active_run = agent_runs.get_active_run(session_id)
         if _active_run is None:
             raise HTTPException(404, "No active run for this session")
+        # Opt-in offset resume for native clients: ``?after=<last seq>`` (or the
+        # standard Last-Event-ID header) replays only missed events, and
+        # ``?ids=1`` tags each event with an SSE ``id:`` line. Browsers send
+        # neither, so their full-replay behaviour is unchanged.
+        _after_raw = request.query_params.get("after") or request.headers.get("Last-Event-ID")
+        _after = None
+        if _after_raw not in (None, ""):
+            try:
+                _after = int(_after_raw)
+            except ValueError:
+                raise HTTPException(400, "after must be an integer event id")
+        _with_ids = _after is not None or request.query_params.get("ids") == "1"
         return StreamingResponse(
-            agent_runs.subscribe(session_id, _active_run),
+            agent_runs.subscribe(session_id, _active_run, after=_after, with_ids=_with_ids),
             media_type="text/event-stream",
             headers={
                 "X-Odysseus-Run-Id": _active_run.run_id,

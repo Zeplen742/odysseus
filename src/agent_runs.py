@@ -212,9 +212,18 @@ def start(session_id: str, agen: AsyncGenerator[str, None]) -> _Run:
 async def subscribe(
     session_id: str,
     expected_run: Optional[_Run] = None,
+    *,
+    after: Optional[int] = None,
+    with_ids: bool = False,
 ) -> AsyncGenerator[str, None]:
-    """Replay the run's buffer from the start, then stream live until it ends.
+    """Replay the run's buffer, then stream live until it ends.
     Safe to call repeatedly (reconnect) and from multiple clients at once.
+
+    By default the whole buffer is replayed from the start. Native clients can
+    pass ``after`` (the sequence number of the last event they received) to
+    replay only what they missed, and ``with_ids`` to have each event prefixed
+    with an SSE ``id: <seq>`` line so they can track that number. Both are
+    opt-in; the default output is byte-identical to the browser's expectation.
 
     ``expected_run`` binds a lazy StreamingResponse body to the same run whose
     identity was put in its response headers. Without that binding, a rapid
@@ -230,10 +239,13 @@ async def subscribe(
     # the run out from under it mid-replay.
     if run.evict_task and not run.evict_task.done():
         run.evict_task.cancel()
+    def _out(seq: int, ev: str) -> str:
+        return f"id: {seq}\n{ev}" if with_ids else ev
+
     try:
-        next_seq = 0
+        next_seq = 0 if after is None else max(0, int(after) + 1)
         while next_seq < len(run.buffer):
-            yield run.buffer[next_seq]
+            yield _out(next_seq, run.buffer[next_seq])
             next_seq += 1
         if run.status != "running":
             return
@@ -253,11 +265,11 @@ async def subscribe(
                 seq, ev = (None, None)
             if seq is None:            # end sentinel
                 while next_seq < len(run.buffer):   # flush any tail the sentinel raced
-                    yield run.buffer[next_seq]
+                    yield _out(next_seq, run.buffer[next_seq])
                     next_seq += 1
                 break
             if seq >= next_seq:        # skip events already replayed from the buffer
-                yield ev
+                yield _out(seq, ev)
                 next_seq = seq + 1
     finally:
         run.subscribers.discard(q)
