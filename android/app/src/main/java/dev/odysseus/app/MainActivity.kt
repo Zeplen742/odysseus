@@ -1,7 +1,12 @@
 package dev.odysseus.app
 
+import android.Manifest
+import android.content.Intent
+import android.content.pm.PackageManager
+import android.os.Build
 import android.os.Bundle
 import androidx.activity.ComponentActivity
+import androidx.activity.result.contract.ActivityResultContracts
 import androidx.activity.compose.BackHandler
 import androidx.activity.compose.setContent
 import androidx.activity.viewModels
@@ -23,8 +28,27 @@ import androidx.lifecycle.compose.LifecycleEventEffect
 class MainActivity : ComponentActivity() {
     private val vm: AppViewModel by viewModels()
 
+    private val askNotifications =
+        registerForActivityResult(ActivityResultContracts.RequestPermission()) { /* best effort */ }
+
+    override fun onStart() { super.onStart(); TurnHost.appVisible = true }
+    override fun onStop() { TurnHost.appVisible = false; super.onStop() }
+
+    override fun onNewIntent(intent: Intent) {
+        super.onNewIntent(intent)
+        setIntent(intent)
+        intent.getStringExtra(Notifier.EXTRA_SESSION)?.let { vm.openFromNotification(it) }
+    }
+
     override fun onCreate(savedInstanceState: Bundle?) {
         super.onCreate(savedInstanceState)
+        if (Build.VERSION.SDK_INT >= 33 &&
+            checkSelfPermission(Manifest.permission.POST_NOTIFICATIONS) != PackageManager.PERMISSION_GRANTED) {
+            askNotifications.launch(Manifest.permission.POST_NOTIFICATIONS)
+        }
+        if (savedInstanceState == null) {
+            intent?.getStringExtra(Notifier.EXTRA_SESSION)?.let { vm.openFromNotification(it) }
+        }
         setContent {
             MaterialTheme(colorScheme = if (androidx.compose.foundation.isSystemInDarkTheme()) darkColorScheme() else lightColorScheme()) {
                 Surface(Modifier.fillMaxSize()) {

@@ -12,6 +12,13 @@ instead of failing.
   with backoff to `GET /api/chat/resume/{session}?after=<last id>` and receives only
   the events it missed. It never re-POSTs the message.
 - Opening the app (or a chat) re-attaches to any run that is still live.
+- While a response is streaming, a foreground service ("Receiving a response…") keeps
+  Android from freezing the app when the screen turns off or you switch apps. Turns run
+  in an app-wide scope, so swiping the app away from recents does not cancel them.
+- Leaving a chat with Back does not cancel it. When the response finishes and you are
+  not looking at that chat, you get a "Response ready" notification; tapping it opens
+  the chat. A lost connection that cannot be recovered notifies too.
+- A network callback ends the reconnect wait early the moment connectivity returns.
 - When a turn ends, the saved history from the server replaces the streamed text.
 
 ## Pairing
@@ -30,5 +37,7 @@ CI builds a debug APK on every change to `android/` (Actions → Android → art
 
 ## Not in v1
 
-No background service or push notification when a run finishes, no QR scanner,
-no attachments, tool-approval prompts or markdown rendering.
+No QR scanner, attachments, tool-approval prompts or markdown rendering. Notifications
+come from the app's own connection, not server push, so they only fire while the app's
+process is alive (during a stream). Deep Doze can still pause the network for a
+screen-off phone; the app resumes as soon as the network is back.

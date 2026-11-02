@@ -83,12 +83,20 @@ class AppViewModel(app: Application) : AndroidViewModel(app) {
         try { openSession(a.newSession()) } catch (e: Exception) { error = describe(e) }
     }
 
+    /** Opened from a "response ready" notification. */
+    fun openFromNotification(id: String) {
+        if (api != null) openSession(id)
+    }
+
     fun openSession(id: String) {
         val a = api ?: return
+        // Coming back to the chat that is still receiving: just show it, don't restart.
+        if (id == currentId && turnJob?.isActive == true) { screen = Screen.CHAT; return }
         turnJob?.cancel()
-        currentId = id; messages = emptyList(); live = ""; status = null; error = null
+        Notifier.clear(getApplication<Application>(), id)
+        currentId = id; messages = emptyList(); live = ""; status = null; error = null; streaming = false
         screen = Screen.CHAT
-        turnJob = viewModelScope.launch {
+        turnJob = TurnHost.scope.launch {
             try {
                 messages = a.history(id)
                 // A run may still be going (or buffered) server-side: re-attach to it.
@@ -102,7 +110,7 @@ class AppViewModel(app: Application) : AndroidViewModel(app) {
         val id = currentId ?: return
         if (streaming || text.isBlank()) return
         messages = messages + ChatMessage("user", text)
-        turnJob = viewModelScope.launch { runTurn(id, text, resumeOnly = false) }
+        turnJob = TurnHost.scope.launch { runTurn(id, text, resumeOnly = false) }
     }
 
     /** Called when the app returns to the foreground: re-attach if the stream died while away. */
@@ -110,30 +118,57 @@ class AppViewModel(app: Application) : AndroidViewModel(app) {
         val id = currentId ?: return
         if (screen != Screen.CHAT || streaming) return
         val a = api ?: return
-        turnJob = viewModelScope.launch {
+        Notifier.clear(getApplication<Application>(), id)
+        turnJob = TurnHost.scope.launch {
             try { if (a.hasActiveRun(id)) runTurn(id, null, resumeOnly = true) } catch (_: Exception) {}
         }
     }
 
     private suspend fun runTurn(id: String, message: String?, resumeOnly: Boolean) {
         val a = api ?: return
-        streaming = true; live = ""; error = null
-        val runner = TurnRunner(open = { first, lastId, onEvent -> a.openTurn(id, message, first, lastId, onEvent) })
+        val ctx = getApplication<Application>()
+        // Only touch UI state while this is still the chat on screen: the user may have
+        // opened another session, which cancels this turn mid-flight.
+        fun current() = currentId == id
+        if (current()) { streaming = true; live = ""; error = null }
+        TurnHost.begin(ctx)
         try {
+            val runner = TurnRunner(
+                open = { first, lastId, onEvent -> a.openTurn(id, message, first, lastId, onEvent) },
+                sleep = { TurnHost.sleepUntilNetworkOr(it) },
+            )
             val outcome = runner.run(
                 resumeOnly = resumeOnly,
-                onDelta = { live += it },
-                onStatus = { status = it },
+                onDelta = { if (current()) live += it },
+                onStatus = { if (current()) status = it },
             )
-            if (outcome is TurnOutcome.Failed) error = outcome.message
+            if (current() && outcome is TurnOutcome.Failed) error = outcome.message
+            notifyIfAway(ctx, id, outcome)
         } finally {
-            status = null; streaming = false
-            // The saved history is canonical (tool output, edits, replacements); prefer it over our deltas.
-            try { messages = a.history(id); live = "" } catch (_: Exception) {}
+            TurnHost.end(ctx)
+            if (current()) {
+                status = null; streaming = false
+                // The saved history is canonical (tool output, edits, replacements); prefer it over our deltas.
+                try { messages = a.history(id); live = "" } catch (_: Exception) {}
+            }
         }
     }
 
-    fun back() { turnJob?.cancel(); streaming = false; status = null; live = ""; screen = Screen.SESSIONS; refreshSessions() }
+    private fun notifyIfAway(ctx: Application, id: String, outcome: TurnOutcome) {
+        val show = NotificationText.shouldNotify(
+            appVisible = TurnHost.appVisible,
+            chatScreenOpen = screen == Screen.CHAT,
+            viewingThisSession = currentId == id,
+        )
+        if (!show) return
+        val name = sessions.firstOrNull { it.id == id }?.name.orEmpty()
+        NotificationText.forOutcome(outcome, name)?.let { (title, text) ->
+            Notifier.finished(ctx, id, title, text)
+        }
+    }
+
+    /** Leaving a chat does NOT cancel it: the response keeps arriving and notifies when ready. */
+    fun back() { screen = Screen.SESSIONS; refreshSessions() }
 
     private fun describe(e: Exception) = when (e) {
         is HttpException -> if (e.code == 401) "Token rejected (401). Re-pair the device." else "Server error ${e.code}"
