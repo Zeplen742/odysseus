@@ -4993,7 +4993,11 @@ def setup_chat_routes(
 
         _detached_run = agent_runs.start(session, _safe_stream())
         return StreamingResponse(
-            agent_runs.subscribe(session, _detached_run),
+            agent_runs.subscribe(
+                session,
+                _detached_run,
+                with_ids=request.query_params.get("ids") == "1",
+            ),
             media_type="text/event-stream",
             headers={
                 "X-Odysseus-Run-Id": _detached_run.run_id,
