@@ -1,43 +1,55 @@
 # Odysseus Android
 
-A small native client for a self-hosted Odysseus server. It exists to make remote
-chat **survive bad connections**: a dropped stream resumes where it left off
-instead of failing.
+The Odysseus web UI in an Android app, plus a native side that keeps track of
+running replies when the page can't: screen off, app in the background, or a
+bad connection.
 
-## How reliability works
+## What it does
 
-- Chats run as detached runs on the server; closing the connection never stops them.
-- The app asks for `?ids=1`, so every SSE event carries a sequence number (`id:`).
-- If the link drops (read timeout, no network, tunnel reset), `TurnRunner` reconnects
-  with backoff to `GET /api/chat/resume/{session}?after=<last id>` and receives only
-  the events it missed. It never re-POSTs the message.
-- Opening the app (or a chat) re-attaches to any run that is still live.
-- While a response is streaming, a foreground service ("Receiving a response…") keeps
-  Android from freezing the app when the screen turns off or you switch apps. Turns run
-  in an app-wide scope, so swiping the app away from recents does not cancel them.
-- Leaving a chat with Back does not cancel it. When the response finishes and you are
-  not looking at that chat, you get a "Response ready" notification; tapping it opens
-  the chat. A lost connection that cannot be recovered notifies too.
-- A network callback ends the reconnect wait early the moment connectivity returns.
-- When a turn ends, the saved history from the server replaces the streamed text.
+- **The web UI, full screen.** Everything the browser version has (markdown,
+  images, tool cards, approvals, settings, file uploads, voice input) comes
+  straight from your server, so the app never lags behind it.
+- **Replies finish in the background.** Chats run as detached runs on the
+  server. When the page starts a reply (or re-attaches to one), the app also
+  follows it natively via `GET /api/chat/resume/{session}?ids=1&after=<id>`,
+  under a foreground service ("Receiving a response…") so Android doesn't
+  freeze it. Drops reconnect with backoff and pick up from the last event id;
+  a network callback ends the wait as soon as connectivity returns.
+- **"Response ready" notifications** when a reply finishes and you aren't
+  looking at that chat. Tapping one opens the chat (`/#<session>`).
+- **Downloads** go to the phone's Downloads folder, including `blob:` ones the
+  page builds itself (exports, gallery).
+- Links to other sites open in the phone's browser.
 
-## Pairing
+The native side signs in with the web page's own login cookie, so there is no
+token or pairing step: open the app, enter the server URL, log in as usual.
 
-1. In a browser logged in as admin, open `https://<your-server>/api/companion/pair`
-   and generate a code.
-2. In the app enter your server URL (your Cloudflare hostname works) and paste the
-   token, or the whole pairing JSON.
+## How the page and the app talk
+
+A small script (`ShellScript.kt`) is injected at document start, only into the
+server's own origin. It reports to the app through `OdysseusNative.postMessage`
+(an `addWebMessageListener` bridge, also limited to the server's origin):
+
+| Message | Sent when |
+|---|---|
+| `{t:"run", s}` | the page POSTs `/api/chat_stream` or GETs `/api/chat/resume/<s>` |
+| `{t:"view", s}` | the chat in view changes (URL hash) |
+| `{t:"file", name, mime, data}` | the page downloads a `blob:`/`data:` URL |
+
+## Setup
+
+Enter the server URL (`https://odysseus.example.com`, or `192.168.1.10:7000`
+on the LAN, which gets `http://`). Long-press the app icon → **Change server**
+to change it later; the error screen also offers it.
 
 ## Build
 
-CI builds a debug APK on every change to `android/` (Actions → Android → artifact
-`odysseus-debug-apk`). Locally: `cd android && ./gradlew testDebugUnitTest assembleDebug`
-(needs JDK 17 and the Android SDK). Install the APK on your phone and allow
-"install unknown apps" for your browser/file manager.
+`cd android && ./gradlew testDebugUnitTest assembleRelease` (JDK 17+ and the
+Android SDK). Android 10 (API 29) or newer.
 
-## Not in v1
+## Limits
 
-No QR scanner, attachments, tool-approval prompts or markdown rendering. Notifications
-come from the app's own connection, not server push, so they only fire while the app's
-process is alive (during a stream). Deep Doze can still pause the network for a
-screen-off phone; the app resumes as soon as the network is back.
+Notifications come from the app's own connection, not server push, so they only
+fire for replies started or re-attached while the app was running. Deep Doze
+can still pause the network for a screen-off phone; the app resumes as soon as
+the network is back.

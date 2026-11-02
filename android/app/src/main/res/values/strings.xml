@@ -1,1 +1,5 @@
-<resources><string name="app_name">Odysseus</string></resources>
+<resources>
+    <string name="app_name">Odysseus</string>
+    <string name="shortcut_change_server">Change server</string>
+    <color name="ic_launcher_background">#282C34</color>
+</resources>

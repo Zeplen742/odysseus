@@ -1,162 +1,280 @@
 package dev.odysseus.app
 
 import android.Manifest
+import android.annotation.SuppressLint
+import android.content.Context
 import android.content.Intent
 import android.content.pm.PackageManager
+import android.net.Uri
 import android.os.Build
 import android.os.Bundle
+import android.view.ViewGroup
+import android.webkit.CookieManager
+import android.webkit.PermissionRequest
+import android.webkit.ValueCallback
+import android.webkit.WebChromeClient
+import android.webkit.WebResourceError
+import android.webkit.WebResourceRequest
+import android.webkit.WebResourceResponse
+import android.webkit.WebView
+import android.webkit.WebViewClient
+import android.widget.FrameLayout
 import androidx.activity.ComponentActivity
+import androidx.activity.OnBackPressedCallback
 import androidx.activity.result.contract.ActivityResultContracts
-import androidx.activity.compose.BackHandler
-import androidx.activity.compose.setContent
-import androidx.activity.viewModels
-import androidx.compose.foundation.clickable
+import androidx.compose.foundation.isSystemInDarkTheme
 import androidx.compose.foundation.layout.*
-import androidx.compose.foundation.lazy.LazyColumn
-import androidx.compose.foundation.lazy.items
-import androidx.compose.foundation.lazy.rememberLazyListState
-import androidx.compose.foundation.text.selection.SelectionContainer
 import androidx.compose.material3.*
 import androidx.compose.runtime.*
-import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
-import androidx.compose.ui.text.input.PasswordVisualTransformation
+import androidx.compose.ui.platform.ComposeView
 import androidx.compose.ui.unit.dp
-import androidx.lifecycle.Lifecycle
-import androidx.lifecycle.compose.LifecycleEventEffect
+import androidx.webkit.WebViewCompat
+import androidx.webkit.WebViewFeature
+import org.json.JSONObject
 
+/**
+ * The Odysseus web UI in a full-screen WebView, plus a native side that follows
+ * running replies (see [RunWatcher]) so they finish and notify in the background.
+ */
 class MainActivity : ComponentActivity() {
-    private val vm: AppViewModel by viewModels()
+    companion object {
+        const val ACTION_CHANGE_SERVER = "dev.odysseus.app.CHANGE_SERVER"
+        private const val PREFS = "odysseus"
+        private const val KEY_URL = "url"
+    }
+
+    private val prefs by lazy { getSharedPreferences(PREFS, Context.MODE_PRIVATE) }
+    private lateinit var webHolder: FrameLayout
+    private var web: WebView? = null
+    private var api: OdysseusApi? = null
+
+    private var base by mutableStateOf<String?>(null)
+    private var showSetup by mutableStateOf(false)
+    private var loadError by mutableStateOf<String?>(null)
+
+    private var fileCallback: ValueCallback<Array<Uri>>? = null
+    private var pendingPermission: PermissionRequest? = null
 
     private val askNotifications =
         registerForActivityResult(ActivityResultContracts.RequestPermission()) { /* best effort */ }
 
-    override fun onStart() { super.onStart(); TurnHost.appVisible = true }
-    override fun onStop() { TurnHost.appVisible = false; super.onStop() }
+    private val pickFiles =
+        registerForActivityResult(ActivityResultContracts.StartActivityForResult()) { r ->
+            fileCallback?.onReceiveValue(WebChromeClient.FileChooserParams.parseResult(r.resultCode, r.data))
+            fileCallback = null
+        }
 
-    override fun onNewIntent(intent: Intent) {
-        super.onNewIntent(intent)
-        setIntent(intent)
-        intent.getStringExtra(Notifier.EXTRA_SESSION)?.let { vm.openFromNotification(it) }
+    private val askMic =
+        registerForActivityResult(ActivityResultContracts.RequestPermission()) { granted ->
+            val req = pendingPermission ?: return@registerForActivityResult
+            pendingPermission = null
+            if (granted) req.grant(arrayOf(PermissionRequest.RESOURCE_AUDIO_CAPTURE)) else req.deny()
+        }
+
+    override fun onStart() { super.onStart(); TurnHost.appVisible = true }
+    override fun onStop() {
+        TurnHost.appVisible = false
+        CookieManager.getInstance().flush()     // keep the login across process death
+        super.onStop()
     }
 
     override fun onCreate(savedInstanceState: Bundle?) {
         super.onCreate(savedInstanceState)
+        prefs.edit().remove("token").apply()      // v0.1 pairing token, no longer used
+        base = prefs.getString(KEY_URL, null)?.let(Urls::normalizeBase)
+        showSetup = base == null || intent?.action == ACTION_CHANGE_SERVER
+
         if (Build.VERSION.SDK_INT >= 33 &&
             checkSelfPermission(Manifest.permission.POST_NOTIFICATIONS) != PackageManager.PERMISSION_GRANTED) {
             askNotifications.launch(Manifest.permission.POST_NOTIFICATIONS)
         }
-        if (savedInstanceState == null) {
-            intent?.getStringExtra(Notifier.EXTRA_SESSION)?.let { vm.openFromNotification(it) }
-        }
-        setContent {
-            MaterialTheme(colorScheme = if (androidx.compose.foundation.isSystemInDarkTheme()) darkColorScheme() else lightColorScheme()) {
-                Surface(Modifier.fillMaxSize()) {
-                    LifecycleEventEffect(Lifecycle.Event.ON_START) { vm.onForeground() }
-                    when (vm.screen) {
-                        Screen.SETUP -> SetupScreen(vm)
-                        Screen.SESSIONS -> SessionsScreen(vm)
-                        Screen.CHAT -> ChatScreen(vm)
+
+        webHolder = FrameLayout(this)
+        val overlay = ComposeView(this).apply {
+            setContent {
+                MaterialTheme(colorScheme = if (isSystemInDarkTheme()) darkColorScheme() else lightColorScheme()) {
+                    when {
+                        showSetup -> Surface(Modifier.fillMaxSize()) { SetupScreen() }
+                        loadError != null -> Surface(Modifier.fillMaxSize()) { ErrorScreen(loadError!!) }
                     }
                 }
             }
         }
-    }
-}
+        setContentView(FrameLayout(this).apply {
+            addView(webHolder, ViewGroup.LayoutParams(-1, -1))
+            addView(overlay, ViewGroup.LayoutParams(-1, -1))
+        })
 
-@Composable
-fun SetupScreen(vm: AppViewModel) {
-    var url by remember { mutableStateOf(vm.baseUrl) }
-    var tok by remember { mutableStateOf(vm.token) }
-    Column(Modifier.fillMaxSize().systemBarsPadding().padding(24.dp), verticalArrangement = Arrangement.Center) {
-        Text("Connect to Odysseus", style = MaterialTheme.typography.headlineSmall)
-        Spacer(Modifier.height(8.dp))
-        Text("On your server open Settings → pair a device (/api/companion/pair), then paste the token or the pairing JSON below.",
-            style = MaterialTheme.typography.bodySmall)
-        Spacer(Modifier.height(16.dp))
-        OutlinedTextField(url, { url = it }, label = { Text("Server URL (https://odysseus.example.com)") },
-            singleLine = true, modifier = Modifier.fillMaxWidth())
-        Spacer(Modifier.height(8.dp))
-        OutlinedTextField(tok, { tok = it }, label = { Text("Token or pairing JSON") },
-            visualTransformation = PasswordVisualTransformation(), modifier = Modifier.fillMaxWidth())
-        vm.error?.let { Text(it, color = MaterialTheme.colorScheme.error, modifier = Modifier.padding(top = 8.dp)) }
-        Spacer(Modifier.height(16.dp))
-        Button({ vm.connect(url, tok) }, enabled = !vm.busy, modifier = Modifier.fillMaxWidth()) {
-            Text(if (vm.busy) "Connecting…" else "Connect")
+        onBackPressedDispatcher.addCallback(this, object : OnBackPressedCallback(true) {
+            override fun handleOnBackPressed() {
+                val w = web
+                when {
+                    showSetup && base != null && w != null -> showSetup = false
+                    !showSetup && w != null && w.canGoBack() -> w.goBack()
+                    else -> finish()
+                }
+            }
+        })
+
+        if (!showSetup) startWeb(intent?.getStringExtra(Notifier.EXTRA_SESSION))
+    }
+
+    override fun onNewIntent(intent: Intent) {
+        super.onNewIntent(intent)
+        setIntent(intent)
+        if (intent.action == ACTION_CHANGE_SERVER) { showSetup = true; return }
+        val session = intent.getStringExtra(Notifier.EXTRA_SESSION) ?: return
+        if (!Urls.isSessionId(session)) return
+        Notifier.clear(this, session)
+        val w = web
+        val b = base ?: return
+        if (w == null) startWeb(session)
+        else if (Urls.isServerUrl(b, w.url ?: "")) w.evaluateJavascript("location.hash = '#$session';", null)
+        else w.loadUrl(Urls.chatUrl(b, session))
+    }
+
+    override fun onDestroy() {
+        web?.destroy()
+        super.onDestroy()
+    }
+
+    // ---------------------------------------------------------------- web view
+
+    @SuppressLint("SetJavaScriptEnabled")
+    private fun startWeb(session: String?) {
+        val b = base ?: return
+        web?.let { webHolder.removeView(it); it.destroy() }
+        api = OdysseusApi(b) { CookieManager.getInstance().getCookie(b) }
+
+        val w = WebView(this)
+        CookieManager.getInstance().setAcceptCookie(true)
+        w.settings.apply {
+            javaScriptEnabled = true
+            domStorageEnabled = true
+            mediaPlaybackRequiresUserGesture = false   // read-aloud starts from a tap the page handles
+            allowFileAccess = false
+            userAgentString = "$userAgentString OdysseusAndroid/${BuildConfig.VERSION_NAME}"
         }
-    }
-}
 
-@OptIn(ExperimentalMaterial3Api::class)
-@Composable
-fun SessionsScreen(vm: AppViewModel) {
-    Scaffold(
-        topBar = {
-            TopAppBar(title = { Text("Odysseus") }, actions = {
-                TextButton({ vm.refreshSessions() }) { Text("Refresh") }
-                TextButton({ vm.signOut() }) { Text("Sign out") }
-            })
-        },
-        floatingActionButton = { ExtendedFloatingActionButton(onClick = { vm.newChat() }) { Text("New chat") } },
-    ) { pad ->
-        Column(Modifier.padding(pad)) {
-            if (vm.busy) LinearProgressIndicator(Modifier.fillMaxWidth())
-            vm.error?.let { Text(it, color = MaterialTheme.colorScheme.error, modifier = Modifier.padding(16.dp)) }
-            LazyColumn {
-                items(vm.sessions, key = { it.id }) { s ->
-                    ListItem(
-                        headlineContent = { Text(s.name.ifBlank { "Untitled" }, maxLines = 1) },
-                        supportingContent = { Text(s.model, maxLines = 1) },
-                        modifier = Modifier.clickable { vm.openSession(s.id) },
-                    )
-                    HorizontalDivider()
+        if (WebViewFeature.isFeatureSupported(WebViewFeature.WEB_MESSAGE_LISTENER)) {
+            WebViewCompat.addWebMessageListener(w, "OdysseusNative", setOf(b)) { _, message, _, isMainFrame, _ ->
+                if (isMainFrame) onPageMessage(message.data ?: return@addWebMessageListener)
+            }
+        }
+        val earlyScript = WebViewFeature.isFeatureSupported(WebViewFeature.DOCUMENT_START_SCRIPT)
+        if (earlyScript) WebViewCompat.addDocumentStartJavaScript(w, ShellScript.JS, setOf(b))
+
+        w.webViewClient = object : WebViewClient() {
+            override fun shouldOverrideUrlLoading(view: WebView, request: WebResourceRequest): Boolean {
+                val url = request.url.toString()
+                if (Urls.isServerUrl(b, url)) return false
+                // anything off the server opens in the phone's browser
+                try { startActivity(Intent(Intent.ACTION_VIEW, request.url)) } catch (_: Exception) {}
+                return true
+            }
+
+            override fun onPageStarted(view: WebView, url: String?, favicon: android.graphics.Bitmap?) {
+                if (!earlyScript && url != null && Urls.isServerUrl(b, url)) view.evaluateJavascript(ShellScript.JS, null)
+            }
+
+            override fun onReceivedError(view: WebView, request: WebResourceRequest, error: WebResourceError) {
+                if (request.isForMainFrame) loadError = "${error.description}"
+            }
+
+            override fun onReceivedHttpError(view: WebView, request: WebResourceRequest, resp: WebResourceResponse) {
+                if (request.isForMainFrame && resp.statusCode >= 500) {
+                    loadError = "The server answered ${resp.statusCode}. If Odysseus is restarting, give it a minute."
                 }
             }
         }
-    }
-}
 
-@OptIn(ExperimentalMaterial3Api::class)
-@Composable
-fun ChatScreen(vm: AppViewModel) {
-    BackHandler { vm.back() }
-    var input by remember { mutableStateOf("") }
-    val list = rememberLazyListState()
-    val rows = vm.messages + if (vm.live.isNotEmpty()) listOf(ChatMessage("assistant", vm.live)) else emptyList()
-    LaunchedEffect(rows.size, vm.live.length) { if (rows.isNotEmpty()) list.scrollToItem(rows.lastIndex) }
-
-    Scaffold(
-        modifier = Modifier.imePadding(),
-        topBar = {
-            TopAppBar(title = { Text(vm.status ?: if (vm.streaming) "Generating…" else "Chat") },
-                navigationIcon = { TextButton({ vm.back() }) { Text("Back") } })
-        },
-        bottomBar = {
-            Row(Modifier.navigationBarsPadding().padding(8.dp), verticalAlignment = Alignment.Bottom) {
-                OutlinedTextField(input, { input = it }, placeholder = { Text("Message") },
-                    modifier = Modifier.weight(1f), maxLines = 5)
-                Spacer(Modifier.width(8.dp))
-                Button({ vm.send(input); input = "" }, enabled = !vm.streaming && input.isNotBlank()) { Text("Send") }
+        w.webChromeClient = object : WebChromeClient() {
+            override fun onShowFileChooser(
+                view: WebView, callback: ValueCallback<Array<Uri>>, params: FileChooserParams,
+            ): Boolean {
+                fileCallback?.onReceiveValue(null)
+                fileCallback = callback
+                return try { pickFiles.launch(params.createIntent()); true }
+                catch (_: Exception) { fileCallback = null; false }
             }
-        },
-    ) { pad ->
-        Column(Modifier.padding(pad)) {
-            vm.error?.let { Text(it, color = MaterialTheme.colorScheme.error, modifier = Modifier.padding(12.dp)) }
-            LazyColumn(Modifier.weight(1f).padding(horizontal = 12.dp), state = list) {
-                items(rows.size) { i ->
-                    val m = rows[i]
-                    val mine = m.role == "user"
-                    Column(Modifier.fillMaxWidth().padding(vertical = 6.dp),
-                        horizontalAlignment = if (mine) Alignment.End else Alignment.Start) {
-                        Surface(
-                            color = if (mine) MaterialTheme.colorScheme.primaryContainer else MaterialTheme.colorScheme.surfaceVariant,
-                            shape = MaterialTheme.shapes.medium,
-                        ) {
-                            SelectionContainer { Text(m.content, Modifier.padding(10.dp)) }
-                        }
-                    }
+
+            override fun onPermissionRequest(request: PermissionRequest) {
+                val wantsMic = PermissionRequest.RESOURCE_AUDIO_CAPTURE in request.resources
+                if (!wantsMic || !Urls.isServerUrl(b, request.origin.toString())) { request.deny(); return }
+                if (checkSelfPermission(Manifest.permission.RECORD_AUDIO) == PackageManager.PERMISSION_GRANTED) {
+                    request.grant(arrayOf(PermissionRequest.RESOURCE_AUDIO_CAPTURE))
+                } else {
+                    pendingPermission?.deny()
+                    pendingPermission = request
+                    askMic.launch(Manifest.permission.RECORD_AUDIO)
                 }
             }
+        }
+
+        w.setDownloadListener { url, userAgent, contentDisposition, mime, _ ->
+            Downloads.enqueue(this, url, userAgent, contentDisposition, mime)
+        }
+
+        webHolder.addView(w, ViewGroup.LayoutParams(-1, -1))
+        web = w
+        loadError = null
+        w.loadUrl(if (session != null && Urls.isSessionId(session)) Urls.chatUrl(b, session) else "$b/")
+    }
+
+    private fun onPageMessage(raw: String) {
+        val o = try { JSONObject(raw) } catch (_: Exception) { return }
+        when (o.optString("t")) {
+            "run" -> api?.let { RunWatcher.follow(this, it, o.optString("s")) }
+            "view" -> {
+                val s = o.optString("s").takeIf(Urls::isSessionId)
+                RunWatcher.viewingSession = s
+                if (s != null) Notifier.clear(this, s)
+            }
+            "file" -> Downloads.saveBase64(
+                this, o.optString("name"), o.optString("mime", "application/octet-stream"), o.optString("data"),
+            )
+        }
+    }
+
+    // ---------------------------------------------------------------- screens
+
+    @Composable
+    private fun SetupScreen() {
+        var input by remember { mutableStateOf(base ?: "") }
+        var error by remember { mutableStateOf<String?>(null) }
+        Column(Modifier.fillMaxSize().padding(24.dp), verticalArrangement = Arrangement.Center) {
+            Text("Odysseus", style = MaterialTheme.typography.headlineMedium)
+            Spacer(Modifier.height(16.dp))
+            OutlinedTextField(
+                value = input, onValueChange = { input = it; error = null },
+                label = { Text("Server URL") }, singleLine = true, modifier = Modifier.fillMaxWidth(),
+            )
+            error?.let { Text(it, color = MaterialTheme.colorScheme.error) }
+            Spacer(Modifier.height(16.dp))
+            Button(onClick = {
+                val b = Urls.normalizeBase(input)
+                if (b == null) { error = "Enter a URL like https://odysseus.example.com"; return@Button }
+                prefs.edit().putString(KEY_URL, b).apply()
+                val changed = b != base
+                base = b
+                showSetup = false
+                if (changed || web == null) startWeb(null)
+            }, modifier = Modifier.fillMaxWidth()) { Text("Connect") }
+        }
+    }
+
+    @Composable
+    private fun ErrorScreen(message: String) {
+        Column(Modifier.fillMaxSize().padding(24.dp), verticalArrangement = Arrangement.Center) {
+            Text("Can't reach Odysseus", style = MaterialTheme.typography.headlineSmall)
+            Spacer(Modifier.height(8.dp))
+            Text(message)
+            Spacer(Modifier.height(4.dp))
+            Text(base ?: "", style = MaterialTheme.typography.bodySmall)
+            Spacer(Modifier.height(16.dp))
+            Button(onClick = { loadError = null; web?.reload() }, modifier = Modifier.fillMaxWidth()) { Text("Retry") }
+            OutlinedButton(onClick = { showSetup = true }, modifier = Modifier.fillMaxWidth()) { Text("Change server") }
         }
     }
 }

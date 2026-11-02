@@ -1,0 +1,14 @@
+<?xml version="1.0" encoding="utf-8"?>
+<!-- Long-press the launcher icon: "Change server" reopens the setup screen. -->
+<shortcuts xmlns:android="http://schemas.android.com/apk/res/android">
+    <shortcut
+        android:shortcutId="change_server"
+        android:enabled="true"
+        android:icon="@mipmap/ic_launcher"
+        android:shortcutShortLabel="@string/shortcut_change_server">
+        <intent
+            android:action="dev.odysseus.app.CHANGE_SERVER"
+            android:targetPackage="dev.odysseus.app"
+            android:targetClass="dev.odysseus.app.MainActivity" />
+    </shortcut>
+</shortcuts>

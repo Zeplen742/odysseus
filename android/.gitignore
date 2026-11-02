@@ -3,3 +3,6 @@ build/
 local.properties
 *.apk
 .idea/
+
+# the repo-wide *.png ignore must not drop the app icon
+!app/src/main/res/**/*.png
